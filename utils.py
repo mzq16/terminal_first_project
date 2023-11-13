@@ -23,9 +23,15 @@ def generate_grid_edges(grid_size):
 
     return grid_edges
 
-
-def add2direction(space_arc:list):
+def to_2dir(space_arc:list):
     new_space_arc = []
     for tup in space_arc:
         new_space_arc.append((tup[1],tup[0]))
-    return space_arc+new_space_arc
+    return space_arc + new_space_arc
+
+def get_neighbour_point(current_point, bi_space_arc):
+    neighbour_point = []
+    for arc in bi_space_arc:
+        if current_point == arc[0]:
+            neighbour_point.append(int(arc[1]))
+    return neighbour_point

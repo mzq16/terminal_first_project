@@ -18,9 +18,10 @@ from alns.stop import MaxRuntime
 import numpy.random as rnd
 import copy
 import matplotlib.pyplot as plt
+from my_alns_class import ProblemState
 
 
-def main():
+def test_GUROBI():
     # get random grid
     grid_size = 5
     start = [(0,0),(2,1),(5,2),(11,3),(17,4),(23,5)]
@@ -31,8 +32,13 @@ def main():
     m.optimize()
     cal_time = time.time() - start_cal_time
     print(f'cal_time:{cal_time}')
+    return m
+    #x = get_vars(m=m)
+    #return x
 
-def buildup_regular(grid_size: int=5, start: list=None, des: list=None, number_vehicle: int=10, distance: float=2.0, v: float=1.0):
+def buildup_regular(grid_size: int=5, start: list=None, des: list=None, 
+                    number_vehicle: int=10, distance: float=2.0, v: float=1.0,
+                    alpha = 1, gamma = 1):
     start_t = time.time()
     m = Model()
     # init
@@ -40,7 +46,9 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None, number_v
     edges_2dir = utils.to_2dir(edges)
     space_node = [i for i in range(grid_size*grid_size)]
     time_n2n = distance / v
-    time_step = [i for i in range(int(2*grid_size*time_n2n))]
+    # get latest task
+    latest_time = max([i[1] for i in start])
+    time_step = [i for i in range(int(2*grid_size*time_n2n+latest_time))]
     time_space_node = [(i,j) for i in space_node for j in time_step]
     time_space_arc = [(i, j) for i in time_space_node for j in time_space_node if ((i != j) and (i[0],j[0]) in edges_2dir and (j[1] > i[1]))]
 
@@ -223,8 +231,7 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None, number_v
 
     m.addConstr(T == quicksum(x[i,j,k] * (j[1] - i[1]) for (i,j) in time_space_arc for k in range(number_vehicle)))
 
-    alpha = 0.1
-    gamma = 0.1
+    
     #m.setObjective(T + alpha * B)
     m.setObjective(T + alpha * B +  gamma * R) # sense=gp.GRB.MAXIMIZE
 
@@ -246,7 +253,7 @@ def get_vars(m:gurobipy.Model):
         if len(split_name) == 0:
             continue
         elif split_name[0] == 'x':
-            if tmp_name > 0.5:
+            if tmp_value > 0.5:
                 i_tuple = ast.literal_eval(split_name[1])
                 j_tuple = ast.literal_eval(split_name[2])
                 k_ind = ast.literal_eval(split_name[3])
@@ -255,17 +262,169 @@ def get_vars(m:gurobipy.Model):
                 continue
     return x
 
+'''
+上面都是GUROBI的代码
+-----------------------------------------------------
+下面都是启发式算法的代码
+'''
 
-    return None
+def get_init_route():
+    pass
 
-if __name__ == '__main__':
-    #main()
-    grid_size = 5
+def buildup_alns_regular(start: list=None, des: list=None, v_spd: float=2.0, 
+                         distance: list=[], space_arc: list=[]) -> ALNS:
+    # init problem state
+    v_r = None
+    state = ProblemState(vehicle_routes = v_r, destinations = des, start_location = start, 
+                         vehicle_speed = v_spd, space_distance = distance, space_arc = space_arc)
+    return state
+
+def test_heuristic():
     start = [(0,0),(2,1),(5,2),(11,3),(17,4),(23,5)]
     des = [4,22,24,4,0,11]
-    m, total_time, setV_time, setCons_time = buildup_regular(grid_size=grid_size, start=start, des=des, number_vehicle=6)
+    grid_size = 5
+
+    # init state
+    t0 = time.time()
+    problem_state = init_problem_state(start=start, des=des, grid_size=grid_size, v_spd=1.0, dist=2.0)
+    init_time = time.time() - t0
+    print(f'inital time: {init_time}')
+    rnd_state = np.random.RandomState(42)
+
+    # Create ALNS and add one or more destroy and repair operators
+    alns = ALNS(rnd.RandomState(seed=42))
+    alns.add_destroy_operator(random_destroy)
+    alns.add_repair_operator(random_repair)
+
+    # Configure ALNS
+    select = RandomSelect(num_destroy=1, num_repair=1)  # see alns.select for others
+    accept = HillClimbing()  # see alns.accept for others
+    iter_time = 10
+    stop = MaxRuntime(iter_time)  # 60 seconds; see alns.stop for others
+
+    # Run the ALNS algorithm
+    print(f'start calculating for {iter_time} seconds ')
+    result = alns.iterate(problem_state, select, accept, stop)
+
+    # Retrieve the final solution
+    best = result.best_state
+    print(f"Best heuristic solution objective is {best.objective()}.")
+
+    return result
+    
+def init_problem_state(start:list, des:list, grid_size:int, v_spd:float, dist:float) -> ProblemState:
+    OD_pairs = utils.get_OD_pair(start=start, des=des)
+    space_routes = defaultdict(list)
+    # get graph
+    edges = utils.generate_grid_edges(grid_size=grid_size)
+    edges_2dir = utils.to_2dir(edges)
+    # get TS routes
+    for i in range(len(OD_pairs)):
+        tmp_path = utils.get_space_path(start=OD_pairs[i][0], des=OD_pairs[i][1], bi_space_arc=edges_2dir)
+        tmp_route = utils.path_to_route(tmp_path)
+        space_routes[i] = tmp_route
+    
+    # get graph distance
+    graph_distance = utils.get_graph_dist(edges_2dir=edges_2dir, dist=dist)
+
+    # get init state 
+    problem_state = ProblemState(space_routes = space_routes, destinations = des, start_location = start, 
+                         vehicle_speed = v_spd, space_distance = graph_distance, space_arc = edges_2dir)
+    return problem_state
+
+def setup_alns(seed=42):
+    # Create ALNS and add one or more destroy and repair operators
+    alns = ALNS(rnd.RandomState(seed=seed))
+    alns.add_destroy_operator(random_destroy)
+    alns.add_repair_operator(random_repair)
+
+    # Configure ALNS
+    select = RandomSelect(num_destroy=1, num_repair=1)  # see alns.select for others
+    accept = HillClimbing()  # see alns.accept for others
+    iter_time = 10
+    stop = MaxRuntime(iter_time)  # 60 seconds; see alns.stop for others
+    return alns, select, accept, stop
+
+'''
+-----------------------------------------------------
+destroy
+'''
+
+def destroy(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    # TODO implement how to destroy the current state, and return the destroyed
+    #  state. Make sure to (deep)copy the current state before modifying!
+    pass
+
+def random_destroy(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    destroy_number = 1
+    next_state = copy.deepcopy(current)
+    destroy_nos = rnd_state.choice(np.arange(0, len(current.vehicle_routes)), destroy_number, replace=False)
+    next_state.update_from_destroy(destroy_nos=destroy_nos)
+    return next_state
+
+'''
+-----------------------------------------------------
+repair
+'''
+
+def repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    # TODO implement how to repair a destroyed state, and return it
+    pass
+
+def random_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    ttt = destroyed.update_from_random_repair(rnd_state=rnd_state)
+    return destroyed
+
+def normal_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    destroy_nos = destroyed.get_destroy_nos()
+    ttt = destroyed.update_from_normal_repair(destroy_nos)
+    return destroyed
+
+def main():
+    n_vehicle = 10
+    grid_size = 7
+    dist = 2.0
+    v_spd = 1.0
+    
+    # generate random OD
+    ODs = []
+    for _ in range(n_vehicle):
+        options = np.arange(start=0, stop=grid_size ** 2 - 1)
+        tmp_od = np.random.choice(options, 2,replace=False)
+        ODs.append(tuple(tmp_od))
+    start_loc, des = zip(*ODs)
+    times = tuple(np.random.randint(0,10,(10,)))
+    start = list(zip(start_loc,times))
+
+
+    # gurobi
+    m, total_time, setV_time, setCons_time \
+        = buildup_regular(grid_size=grid_size, start=start, des=des, number_vehicle=n_vehicle, 
+                          distance=dist, v=v_spd)
+    m.setParam('OutputFlag', 0)
     print(f'total_time:{total_time}, setV_time:{setV_time}, setCons_time:{setCons_time}')
-    start_cal_time = time.time()
+    start_gurobi_time = time.time()
     m.optimize()
-    cal_time = time.time() - start_cal_time
+    cal_time = time.time() - start_gurobi_time
     print(f'cal_time:{cal_time}')
+
+    # alns
+    t0 = time.time()
+    problem_state = init_problem_state(start=start, des=des, grid_size=grid_size, v_spd=v_spd, dist=dist)
+    init_time = time.time() - t0
+    print(f'inital time: {init_time}')
+
+    alns, select, accept, stop = setup_alns()
+    result = alns.iterate(problem_state, select, accept, stop)
+
+    # Retrieve the final solution
+    best = result.best_state
+    print(f"Best heuristic solution objective is {best.objective()}.")
+    gurobi_best = m.objVal
+    print(f'gurobi:{gurobi_best}, alns:{best.objective()}, {best.objective()/gurobi_best}')
+
+
+if __name__ == '__main__':
+    #m = test_GUROBI()
+    #ps = test_heuristic()
+    m = main()

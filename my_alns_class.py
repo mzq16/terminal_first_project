@@ -13,7 +13,8 @@ import utils
 class ProblemState:
     # TODO add attributes that encode a solution to the problem instance
     def __init__(self, 
-                 vehicle_routes: defaultdict(list) = None, 
+                 space_routes: defaultdict(list) = None, 
+                 time_space_routes: defaultdict(list) = None,
                  destinations: list = None, 
                  start_location: list = None, 
                  vehicle_speed: float = 1.0,
@@ -23,28 +24,36 @@ class ProblemState:
                  b0: int = 1, 
                  p0: int = 1,
                  init_flag = True) -> None:
-        self.vehicle_routes = vehicle_routes
         self.destinations = destinations
         self.start_location = start_location
-        # dict 内嵌 dict, e.g. road_traffic['a']['b'] = 1, start from 0
-        self.road_traffic = defaultdict(lambda: defaultdict(int))   # r_t[road][t] --------> r_t[p1,p2][t] = v_number
-        self.point_traffic = defaultdict(int)  # p_t[point][t] --------> p_t[p1][t] = v_number
-        self.vehicle_time = defaultdict(int)                        # v_t[v] = total_time
-        self.road_block = defaultdict(lambda: defaultdict(int))     # r_b[road][t] = 1 if block else 0
-        self.point_block = defaultdict(int)    # p_b[point][t] = 1 if block else 0
         self.vehicle_speed = vehicle_speed
         self.space_distance = space_distance
         self.space_arc = space_arc
         self.b0 = b0
         self.p0 = p0
-        if init_flag:
-            self.init_update_variable_value()
         self.T = 0
         self.B = 0
         self.P = 0
         self.destroy_nos = np.array([]) # ndarray
         self.bi_space_arc =  self.get_bidirection_arc()
-
+        # check v routes, time-space routes or only space routes
+        if time_space_routes:
+            self.vehicle_routes = time_space_routes
+            # dict 内嵌 dict, e.g. road_traffic['a']['b'] = 1, start from 0
+            self.road_traffic = defaultdict(lambda: defaultdict(int))   # r_t[road][t] --------> r_t[p1,p2][t] = v_number
+            self.point_traffic = defaultdict(int)  # p_t[point][t] --------> p_t[p1][t] = v_number
+            self.vehicle_time = defaultdict(int)                        # v_t[v] = total_time
+            self.road_block = defaultdict(lambda: defaultdict(int))     # r_b[road][t] = 1 if block else 0
+            self.point_block = defaultdict(int)    # p_b[point][t] = 1 if block else 0
+        elif space_routes:
+            self.vehicle_routes = None
+            self.get_TSRoutes_from_SpaceRoutes_global(repair_space_route=space_routes)
+            # self.vehicle_routes = space_routes 
+        else:
+            raise ValueError('no routes for init')
+        if init_flag and not space_routes:
+            self.init_update_variable_value()
+    
     def init_update_variable_value(self) -> None:
         '''
         3 parts: T, B & R
@@ -112,7 +121,7 @@ class ProblemState:
         return copy.deepcopy(self.vehicle_routes), copy.deepcopy(self.vehicle_time), copy.deepcopy(self.road_traffic), \
             copy.deepcopy(self.point_traffic), copy.deepcopy(self.road_block), copy.deepcopy(self.point_block)
 
-    def update_from_destroy(self, destroy_nos: list):
+    def update_from_destroy(self, destroy_nos: np.ndarray):
         self.destroy_nos = destroy_nos
         for destroy_no in destroy_nos:
             assert destroy_no in self.vehicle_routes, f'delete number {destroy_no} does not in the vehicle routes'
@@ -142,13 +151,23 @@ class ProblemState:
         repair_space_route = self.get_random_SpaceRoutes(rnd_state=rnd_state)
 
         # (2) from space routes to calculate TS routes
-        # repair_TS_route = self.get_TSRoutes_from_SpaceRoutes_single(repair_space_route)
+        # repair_TS_route = self.get_TSRoutes_from_SpaceRoutes_local(repair_space_route)
         repair_TS_route = self.get_TSRoutes_from_SpaceRoutes_global(repair_space_route=repair_space_route)
         return repair_TS_route
     
+    def update_from_normal_repair(self, destroy_id:int):
+        if not isinstance(destroy_id, int):
+            destroy_id = int(destroy_id)
+        start_loc = self.start_location[destroy_id]
+        des_loc = self.destinations[destroy_id]
+        repair_space_route = self.get_SpaceRoute(edges_2dir=self.bi_space_arc, start_loc=start_loc, des_loc=des_loc)
+        repair_TS_route = self.get_TSRoutes_from_SpaceRoutes_global(repair_space_route=repair_space_route)
+        return repair_TS_route
+
     def get_random_SpaceRoutes(self, rnd_state:rnd.RandomState):
         repair_space_route = defaultdict(list)
         for id in self.destroy_nos:
+            id = int(id)
             des = self.destinations[id]
             start_loc = self.start_location[id]
             current_space_point = start_loc[0]
@@ -161,8 +180,13 @@ class ProblemState:
                 neighbour_point = utils.get_neighbour_point(current_space_point, self.bi_space_arc)
             repair_space_route[id].append((int(current_space_point), des))
         return repair_space_route
+    
+    def get_SpaceRoute(self, edges_2dir:list, start_loc:tuple, des_loc:tuple):
+        tmp_path = utils.get_space_path(start=start_loc, des=des_loc, bi_space_arc=edges_2dir)
+        tmp_route = utils.path_to_route(tmp_path)
+        return tmp_route
 
-    def get_TSRoutes_from_SpaceRoutes_single(self, repair_space_route: dict):     # dict(list(tuple))
+    def get_TSRoutes_from_SpaceRoutes_local(self, repair_space_route: dict):     # dict(list(tuple))
         new_TS_routes = defaultdict(list) # defaultdict is not easy for comerge
         for k, spc_arcs in repair_space_route.items():
             # for each repaired vehicle route, usual only one vehicle destroyed one step
@@ -177,13 +201,13 @@ class ProblemState:
     
     def get_TSRoutes_from_SpaceRoutes_global(self, repair_space_route: defaultdict(list)):
         # (1) get all vehicle space routes
-        for v_id, TS_arcs in self.vehicle_routes.items():
-            for arc in TS_arcs:
-                repair_space_route[v_id].append((arc[0][0],arc[1][0]))
-        
+        if self.vehicle_routes is not None:
+            for v_id, TS_arcs in self.vehicle_routes.items():
+                for arc in TS_arcs:
+                    repair_space_route[v_id].append((arc[0][0],arc[1][0]))
+        n_vehicle = len(repair_space_route)
         # (2) get TS route from all space route
         # 2.0 init 
-        task_finish = defaultdict(int)
         new_TS_routes = defaultdict(list)
         new_road_traffic = defaultdict(lambda: defaultdict(int))
         new_point_traffic = defaultdict(int)  
@@ -192,58 +216,71 @@ class ProblemState:
         new_point_block = defaultdict(int)
         length_stat = defaultdict(int)
         # two pointer to indicate current process for each vehicle
-        arc_index = defaultdict(int)    # save each vehicle arc index
+        arc_index_pointer = defaultdict(int)    # save each vehicle arc index, like pointer
         prev_TS_point = defaultdict(tuple) # save previous time-space node: (space, time)
-        for v_id in repair_space_route.keys():
-            task_finish[v_id] = 0
-            prev_TS_point[v_id] = self.start_location[v_id]
-        timestep = 0
-        total_sum = sum(value for value in task_finish.values())
 
+        not_finished_id = set()
+        finished_id = set()
+        active_v_ids = set()
+        for v_id in repair_space_route.keys():
+            prev_TS_point[v_id] = self.start_location[v_id]
+            not_finished_id.add(v_id)
+        start_time = [t[1] for t in self.start_location]
+        timestep = min(start_time)
+        
         # start iteration
-        while total_sum != len(task_finish):
-            tmp_point_index = []     # used for point block
-            active_v_ids = [v_id for v_id, value in task_finish.items() if value == 0]
+        while n_vehicle != len(finished_id):
+            tmp_point_index = []     # used for point block check
+            # get active set
+            tmp_set = set()
+            for v_id in not_finished_id:
+                if start_time[v_id] <= timestep:
+                    tmp_set.add(v_id)
+            active_v_ids |=  tmp_set
+            not_finished_id -= tmp_set
+            del tmp_set
+
             # 2.1 first count road vehicle number to get global block situation
-            for v_id in active_v_ids:
-                tmp_road = repair_space_route[v_id][arc_index[v_id]]
+            for v_id in active_v_ids: 
+                tmp_road = repair_space_route[v_id][arc_index_pointer[v_id]]
                 new_road_traffic[tmp_road][timestep] += 1
                 
-            # 2.2 record route length
-            for v_id in active_v_ids:
-                tmp_road = repair_space_route[v_id][arc_index[v_id]]
-                # block or not
+            # 2.2 after count we get block and spd, then we could record route length
+            for v_id in list(active_v_ids): # list for the error “Set changed size during iteration”
+                tmp_road = repair_space_route[v_id][arc_index_pointer[v_id]]
+                # block or not, which decide the spd
                 if new_road_traffic[tmp_road][timestep] > self.b0:
                     new_road_block[tmp_road][timestep] = 1
-                    length_stat[v_id] += self.vehicle_speed / 2 
+                    length_stat[v_id] += self.vehicle_speed / 2.0 
                 else:
                     assert new_road_block[tmp_road][timestep] == 0, 'error block situation'
                     length_stat[v_id] += self.vehicle_speed 
 
-                # arrived next point
+                # check if arrived next point
                 if length_stat[v_id] >= self.space_distance[tmp_road]: 
-                    arc_index[v_id] += 1
+                    arc_index_pointer[v_id] += 1
+                    length_stat[v_id] = 0
                     arrived_TS_point = (tmp_road[1], timestep+1)
                     new_point_traffic[arrived_TS_point] += 1
                     new_TS_routes[v_id].append((prev_TS_point[v_id], arrived_TS_point))
                     prev_TS_point[v_id] = arrived_TS_point
                     tmp_point_index.append(arrived_TS_point)
                 # task finished
-                if arc_index[v_id] == len(repair_space_route[v_id]):
-                    task_finish[v_id] = 1
+                if arc_index_pointer[v_id] == len(repair_space_route[v_id]):
+                    finished_id.add(v_id)
+                    active_v_ids.remove(v_id)
                     new_vehicle_time[v_id] += arrived_TS_point[1] - self.start_location[v_id][1] # final point time - first point time
             
             for index in tmp_point_index:
                 if new_point_traffic[index] > self.p0:
                     new_point_block[index] = 1
             timestep += 1
-            total_sum = sum(value for value in task_finish.values())
 
         # all task finished
         # give the value
         self.update_from_parameter(v_r=new_TS_routes, v_t=new_vehicle_time, r_t=new_road_traffic, r_b=new_road_block,
                                    p_t=new_point_traffic, p_b=new_point_block)
-        return new_TS_routes
+        # return new_TS_routes
     
     def update_from_parameter(self, v_r: defaultdict(list), v_t, r_t, p_t, r_b, p_b):
         # cal by using hash to reduce the time, so it is diffence with the init update
@@ -266,8 +303,11 @@ class ProblemState:
         #  if you do not use those, this default is already sufficient!
         return None
     
-    def render_info(self):
+    def get_info(self):
         print(f'T:{self.T}, B:{self.B}, P:{self.P}')
+
+    def get_destroy_nos(self):
+        return self.destroy_nos
 
     def calculateTime_from_BlockNo_single(self, spc_arc, start_time):
         '''

@@ -141,7 +141,7 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
     |（2）时间约束                           |
     -----------------------------------------
     '''
-
+    time_start = time.time()
     for (p,q) in edges_2dir:
     # select graph from pq
         for k in range(number_vehicle):
@@ -152,7 +152,7 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
     for (p,q) in edges_2dir:
         for t in time_step:
             m.addConstr(C[p,q,t] == quicksum(delta[p,q,t,k] for k in range(number_vehicle)))
-
+    t1 = time.time() - time_start
     b0 = 1 # block threshold
     M = 100
     '''
@@ -179,9 +179,9 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
 
     # constrain for sum 
     m.addConstr(B == quicksum(bb[t] for t in time_step))
-
+    t2 = time.time() - time_start - t1
     # constrains for time
-    tau = 1.5+0.01
+    tau = distance / v
     for key in list(x.keys()):
         '''
         t_i = key[0][1]
@@ -206,7 +206,7 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
         m.addConstr(z[i,j,k] <= 2*tau*(t_j-t_i)/(t_j-t_i-1+1e-6))
 
         m.addConstr(t_j-t_i - l[i,j]/2 >= tau * x[key])
-
+    t3 = time.time() - time_start - t1 - t2
     #constrains for degree
     for i in time_space_node:
         for k in range(number_vehicle):
@@ -234,11 +234,12 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
     
     #m.setObjective(T + alpha * B)
     m.setObjective(T + alpha * B +  gamma * R) # sense=gp.GRB.MAXIMIZE
-
+    t4 = time.time() - time_start - t1 - t2 - t3
+    ttt = [t1,t2,t3,t4]
     total_time = time.time() - start_t
     setCons_time = total_time - setV_time
 
-    return m, total_time, setV_time, setCons_time
+    return m, total_time, setV_time, setCons_time, ttt
 
 def get_vars(m:gurobipy.Model):
     '''
@@ -398,11 +399,12 @@ def main():
 
 
     # gurobi
-    m, total_time, setV_time, setCons_time \
+    m, total_time, setV_time, setCons_time, ttt\
         = buildup_regular(grid_size=grid_size, start=start, des=des, number_vehicle=n_vehicle, 
                           distance=dist, v=v_spd)
     m.setParam('OutputFlag', 0)
     print(f'total_time:{total_time}, setV_time:{setV_time}, setCons_time:{setCons_time}')
+    print(ttt)
     start_gurobi_time = time.time()
     m.optimize()
     cal_time = time.time() - start_gurobi_time

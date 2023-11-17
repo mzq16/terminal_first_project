@@ -19,6 +19,7 @@ import numpy.random as rnd
 import copy
 import matplotlib.pyplot as plt
 from my_alns_class import ProblemState
+from tqdm import tqdm
 
 
 def test_GUROBI():
@@ -46,14 +47,20 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
     edges_2dir = utils.to_2dir(edges)
     space_node = [i for i in range(grid_size*grid_size)]
     time_n2n = distance / v
+    time_limit = 2 * time_n2n + 1
     # get latest task
     latest_time = max([i[1] for i in start])
     time_step = [i for i in range(int(2*grid_size*time_n2n+latest_time))]
     time_space_node = [(i,j) for i in space_node for j in time_step]
-    time_space_arc = [(i, j) for i in time_space_node for j in time_space_node if ((i != j) and (i[0],j[0]) in edges_2dir and (j[1] > i[1]))]
+    # ts_arc could be exponential growth, in case of this we need add some limits
+    # related to ex-growth: time limit, 超过limit意思就是车怎么着都过不去， 
+    # not related to : t_i < t_j, i!=j, ij is connected in space
+    time_space_arc = [(i, j) for i in time_space_node for j in time_space_node \
+                      if ((i != j) and (i[0],j[0]) in edges_2dir and (j[1] > i[1]) and j[1] - i[1] < time_limit)]
 
     # init var
     # x, y, z
+    print('start set Vars')
     x = {}
     for (i, j) in time_space_arc:
         for k in range(number_vehicle):
@@ -141,7 +148,8 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
     |（2）时间约束                           |
     -----------------------------------------
     '''
-    time_start = time.time()
+    print('start set constraints')
+    pb = tqdm(total=len(edges_2dir), initial=0)
     for (p,q) in edges_2dir:
     # select graph from pq
         for k in range(number_vehicle):
@@ -149,10 +157,14 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
             for t in time_step:
                 # 如果不是j[1]-1就会出现01道路上，a车在时刻2从1出去，b车在时刻2从0进来，这种情况算堵车  
                 m.addConstr(delta[p,q,t,k] == quicksum(x[i,j,k] for (i,j) in ts_pq_arc if (i[1]<=t and t<=j[1] - 1))) 
+        pb.update(1)
+    pb.close()
+
+    
     for (p,q) in edges_2dir:
         for t in time_step:
             m.addConstr(C[p,q,t] == quicksum(delta[p,q,t,k] for k in range(number_vehicle)))
-    t1 = time.time() - time_start
+    
     b0 = 1 # block threshold
     M = 100
     '''
@@ -179,9 +191,12 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
 
     # constrain for sum 
     m.addConstr(B == quicksum(bb[t] for t in time_step))
-    t2 = time.time() - time_start - t1
+    time_start = time.time()
+    
     # constrains for time
     tau = distance / v
+    print('start transfer speed to linear')
+    pb = tqdm(total=len(x.keys()))
     for key in list(x.keys()):
         '''
         t_i = key[0][1]
@@ -204,26 +219,39 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
         m.addConstr(z[i,j,k] >= (t_j-t_i)*x[key])
         m.addConstr(z[i,j,k] <= 2*(t_j-t_i)*x[key])
         m.addConstr(z[i,j,k] <= 2*tau*(t_j-t_i)/(t_j-t_i-1+1e-6))
-
         m.addConstr(t_j-t_i - l[i,j]/2 >= tau * x[key])
-    t3 = time.time() - time_start - t1 - t2
+        pb.update(1)
+    pb.close()
+    t1 = time.time() - time_start
+    
     #constrains for degree
+    print('start add degree constrain')
+    pb = tqdm(total=len(time_space_node))
     for i in time_space_node:
         for k in range(number_vehicle):
-            m.addConstr(quicksum(x[i,j,k] 
-                for j in time_space_node if ((i[0],j[0]) in edges or (j[0],i[0]) in edges) and (j[1] > i[1])) 
-            - quicksum(x[j,i,k] 
-                for j in time_space_node if ((i[0],j[0]) in edges or (j[0],i[0]) in edges) and (j[1] < i[1])) == Y[i,k] - Z[i,k])    # 这地方可改可不改，意思都一样
-
+            m.addConstr(quicksum(x[i,j,k] for j in time_space_node if (i,j,k) in x.keys())
+                # for j in time_space_node if ((i[0],j[0]) in edges or (j[0],i[0]) in edges) and (j[1] > i[1]))
+            - quicksum(x[j,i,k] for j in time_space_node if (j,i,k) in x.keys()) == Y[i,k] - Z[i,k])    # 这地方可改可不改，意思都一样
+                #for j in time_space_node if ((i[0],j[0]) in edges or (j[0],i[0]) in edges) and (j[1] < i[1])) == Y[i,k] - Z[i,k])    # 这地方可改可不改，意思都一样
+        pb.update(1)
+    pb.close()      
+    t2 = time.time() - time_start - t1
+    
     # constrains for Corner block based on degree
     r0 = 1
+    print('start calculate node degree')
+    pb = tqdm(total=len(time_space_node))
     for i in time_space_node:
-        m.addConstr(beta[i] == quicksum(x[i,j,k] for j in time_space_node if (((i[0],j[0]) in edges_2dir) and (j[1] > i[1])) for k in range(number_vehicle)) 
+        #m.addConstr(beta[i] == quicksum(x[i,j,k] for j in time_space_node if (((i[0],j[0]) in edges_2dir) and (j[1] > i[1])) for k in range(number_vehicle)) 
+        m.addConstr(beta[i] == quicksum(x[i,j,k] for j in time_space_node for k in range(number_vehicle) if (i,j,k) in x.keys()) 
                                 - quicksum(Z[i,k] for k in range(number_vehicle))
         )
         m.addConstr(r[i]*M >= beta[i] - r0)
+        pb.update(1)
+    pb.close()
     m.addConstr(R == quicksum(r[i] for i in time_space_node))
-
+    t3 = time.time() - time_start - t1 - t2
+    
     # constrains for Z
     for k in range(number_vehicle):
         m.addConstr(quicksum(Z[i,k] for i in time_space_node if i[0] != des[k]) == 0)
@@ -231,11 +259,10 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
 
     m.addConstr(T == quicksum(x[i,j,k] * (j[1] - i[1]) for (i,j) in time_space_arc for k in range(number_vehicle)))
 
-    
     #m.setObjective(T + alpha * B)
     m.setObjective(T + alpha * B +  gamma * R) # sense=gp.GRB.MAXIMIZE
-    t4 = time.time() - time_start - t1 - t2 - t3
-    ttt = [t1,t2,t3,t4]
+    
+    ttt = [t1,t2,t3]
     total_time = time.time() - start_t
     setCons_time = total_time - setV_time
 
@@ -382,7 +409,7 @@ def normal_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> Proble
     return destroyed
 
 def main():
-    n_vehicle = 10
+    n_vehicle = 50
     grid_size = 7
     dist = 2.0
     v_spd = 1.0
@@ -394,7 +421,7 @@ def main():
         tmp_od = np.random.choice(options, 2,replace=False)
         ODs.append(tuple(tmp_od))
     start_loc, des = zip(*ODs)
-    times = tuple(np.random.randint(0,10,(10,)))
+    times = tuple(np.random.randint(0,10,(n_vehicle,)))
     start = list(zip(start_loc,times))
 
 

@@ -2,7 +2,9 @@ import os
 import heapq
 from collections import deque
 from collections import defaultdict
+from my_alns_class import ProblemState
 
+# get graph
 def generate_grid_edges(grid_size) -> list:
     if grid_size < 1:
         return []
@@ -32,6 +34,7 @@ def to_2dir(space_arc: list) -> list:
         new_space_arc.append((tup[1],tup[0]))
     return space_arc + new_space_arc
 
+# get function
 def get_neighbour_point(current_point, bi_space_arc) -> list:
     neighbour_point = []
     for arc in bi_space_arc:
@@ -66,12 +69,46 @@ def get_graph_dist(edges_2dir: list, dist: float) -> dict:
     for i in range(len(edges_2dir)):
         distance[edges_2dir[i]] = dist
     return distance
-        
+
+# transfer function
 def path_to_route(single_path: list):
     tmp_route = []
     for i in range(len(single_path) - 1):
         tmp_route.append((single_path[i], single_path[i+1]))
     return tmp_route
+
+# test function
+def compare_2methods_result(gurobi_data):
+    des = gurobi_data['destination']
+    start = gurobi_data['start_node']
+    v_spd = gurobi_data['vehicle_speed']
+    edges = generate_grid_edges(grid_size=gurobi_data['grid_size'])
+    edges_2dir = to_2dir(edges)
+    ts_routes = sort_ts_routes(gurobi_data['result_route_gurobi'])
+    graph_distance = get_graph_dist(edges_2dir=edges_2dir,dist=gurobi_data['distance'])
+    problem_state = ProblemState(time_space_routes = ts_routes, destinations = des, start_location = start, 
+                            vehicle_speed = v_spd, space_distance = graph_distance, space_arc = edges_2dir)
+    return True if gurobi_data['gurobi_obj'] == problem_state.objective() else False
+
+def sort_ts_routes(multi_ts_route: dict):
+    ts_routes = {}
+    for k in multi_ts_route.keys():
+        t_list = multi_ts_route[k]
+        tmp_list = sorted(t_list, key=lambda x:x[0][1])
+        ts_routes[k] = tmp_list
+    return ts_routes
+
+def cal_alns_obj_from_gurobi(gurobi_data):
+    des = gurobi_data['destination']
+    start = gurobi_data['start_node']
+    v_spd = gurobi_data['vehicle_speed']
+    edges = generate_grid_edges(grid_size=gurobi_data['grid_size'])
+    edges_2dir = to_2dir(edges)
+    ts_routes = sort_ts_routes(gurobi_data['result_route_gurobi'])
+    graph_distance = get_graph_dist(edges_2dir=edges_2dir,dist=gurobi_data['distance'])
+    problem_state = ProblemState(time_space_routes = ts_routes, destinations = des, start_location = start, 
+                            vehicle_speed = v_spd, space_distance = graph_distance, space_arc = edges_2dir)
+    return problem_state.objective()
 
 def dijkstra(graph, start):
     """

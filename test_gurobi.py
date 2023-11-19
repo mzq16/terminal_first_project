@@ -20,7 +20,7 @@ import copy
 import matplotlib.pyplot as plt
 from my_alns_class import ProblemState
 from tqdm import tqdm
-
+import pickle
 
 def test_GUROBI():
     # get random grid
@@ -409,48 +409,82 @@ def normal_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> Proble
     return destroyed
 
 def main():
-    n_vehicle = 50
-    grid_size = 7
-    dist = 2.0
-    v_spd = 1.0
+    num_exp = 50
+    experiments_data = []
+    for exp_id in range(1, num_exp + 1):
+        print('-------------------------------------------------------')
+        print(f'start {exp_id} experiment')
+        n_vehicle = 50
+        grid_size = 8
+        dist = 2.0
+        v_spd = 1.0
+        
+        # generate random OD
+        ODs = []
+        for _ in range(n_vehicle):
+            options = np.arange(start=0, stop=grid_size ** 2 - 1)
+            tmp_od = np.random.choice(options, 2,replace=False)
+            ODs.append(tuple(tmp_od))
+        start_loc, des = zip(*ODs)
+        times = tuple(np.random.randint(0,10,(n_vehicle,)))
+        start = list(zip(start_loc,times))
+
+
+        # gurobi
+        m, total_time, setV_time, setCons_time, ttt\
+            = buildup_regular(grid_size=grid_size, start=start, des=des, number_vehicle=n_vehicle, 
+                            distance=dist, v=v_spd)
+        m.setParam('OutputFlag', 0)
+        print(f'total_time:{total_time}, setV_time:{setV_time}, setCons_time:{setCons_time}')
+        print(ttt)
+        print('start optimize')
+        start_gurobi_time = time.time()
+        m.optimize()
+        cal_time = time.time() - start_gurobi_time
+        print(f'cal_time:{cal_time}')
+        result_x = get_vars(m=m)
+        gurobi_time = {
+            'opt_time':cal_time,
+            'total_time':total_time,
+            'setV_time':setV_time,
+            'setCons_time':setCons_time,
+            'setCons_details':ttt,
+        }
+
+        experiment_data = {
+            'experiment_id':exp_id,
+            'result_route_gurobi':result_x,
+            'start_node':start,
+            'destination':des,
+            'vehicle_speed':v_spd,
+            'distance':dist,
+            'grid_size':grid_size,
+            'times':gurobi_time,
+        }
+
+        with open(f'experiment_{exp_id}.pkl', 'wb') as file:
+            pickle.dump(experiment_data, file)
+        experiments_data.append(experiment_data)
     
-    # generate random OD
-    ODs = []
-    for _ in range(n_vehicle):
-        options = np.arange(start=0, stop=grid_size ** 2 - 1)
-        tmp_od = np.random.choice(options, 2,replace=False)
-        ODs.append(tuple(tmp_od))
-    start_loc, des = zip(*ODs)
-    times = tuple(np.random.randint(0,10,(n_vehicle,)))
-    start = list(zip(start_loc,times))
+    # finish loop
+    with open(f'all_experiments.pkl', 'wb') as file:
+        pickle.dump(experiments_data, file)
+        # alns 
+        '''
+        t0 = time.time()
+        problem_state = init_problem_state(start=start, des=des, grid_size=grid_size, v_spd=v_spd, dist=dist)
+        init_time = time.time() - t0
+        print(f'inital time: {init_time}')
 
+        alns, select, accept, stop = setup_alns()
+        result = alns.iterate(problem_state, select, accept, stop)
 
-    # gurobi
-    m, total_time, setV_time, setCons_time, ttt\
-        = buildup_regular(grid_size=grid_size, start=start, des=des, number_vehicle=n_vehicle, 
-                          distance=dist, v=v_spd)
-    m.setParam('OutputFlag', 0)
-    print(f'total_time:{total_time}, setV_time:{setV_time}, setCons_time:{setCons_time}')
-    print(ttt)
-    start_gurobi_time = time.time()
-    m.optimize()
-    cal_time = time.time() - start_gurobi_time
-    print(f'cal_time:{cal_time}')
-
-    # alns
-    t0 = time.time()
-    problem_state = init_problem_state(start=start, des=des, grid_size=grid_size, v_spd=v_spd, dist=dist)
-    init_time = time.time() - t0
-    print(f'inital time: {init_time}')
-
-    alns, select, accept, stop = setup_alns()
-    result = alns.iterate(problem_state, select, accept, stop)
-
-    # Retrieve the final solution
-    best = result.best_state
-    print(f"Best heuristic solution objective is {best.objective()}.")
-    gurobi_best = m.objVal
-    print(f'gurobi:{gurobi_best}, alns:{best.objective()}, {best.objective()/gurobi_best}')
+        # Retrieve the final solution
+        best = result.best_state
+        print(f"Best heuristic solution objective is {best.objective()}.")
+        gurobi_best = m.objVal
+        print(f'gurobi:{gurobi_best}, alns:{best.objective()}, {best.objective()/gurobi_best}')
+        '''
 
 
 if __name__ == '__main__':

@@ -37,14 +37,12 @@ class ProblemState:
         self.destroy_nos = np.array([]) # ndarray
         self.bi_space_arc =  self.get_bidirection_arc()
         self.vehicle_penalty = defaultdict(float)
-        self.road_with_id = defaultdict(list)
-        self.point_with_id = defaultdict(list)
         # check v routes, time-space routes or only space routes
         if time_space_routes:
             self.vehicle_routes = time_space_routes
             # dict 内嵌 dict, e.g. road_traffic['a']['b'] = 1, start from 0
-            self.road_traffic = defaultdict(lambda: defaultdict(int))   # r_t[road][t] --------> r_t[p1,p2][t] = v_number
-            self.point_traffic = defaultdict(int)  # p_t[point][t] --------> p_t[p1][t] = v_number
+            self.road_traffic = defaultdict(lambda: defaultdict(list))   # r_t[road][t] --------> r_t[p1,p2][t].appedn(v_id) 
+            self.point_traffic = defaultdict(list)  # p_t[point][t] --------> p_t[p1][t] = v_number
             self.vehicle_time = defaultdict(int)                        # v_t[v] = total_time
             self.road_block = defaultdict(lambda: defaultdict(int))     # r_b[road][t] = 1 if block else 0
             self.point_block = defaultdict(int)    # p_b[point][t] = 1 if block else 0
@@ -64,8 +62,7 @@ class ProblemState:
         B: block number during the finish time
         R: corner block number
         '''
-        
-        for vehicle, arcs in self.vehicle_routes.items():
+        for v_id, arcs in self.vehicle_routes.items():
             previous_TS_point = None
             for arc in arcs:
                 # if previous_TS_point == None:
@@ -73,33 +70,27 @@ class ProblemState:
                 next_TS_point = arc[1]      # (space,time)
 
                 # (1) cal t
-                self.vehicle_time[vehicle] += next_TS_point[1] - previous_TS_point[1]
+                self.vehicle_time[v_id] += next_TS_point[1] - previous_TS_point[1]
 
                 # (2) cal b
                 tmp_road = (previous_TS_point[0], next_TS_point[0])
                 for t in range(previous_TS_point[1], next_TS_point[1]):
-                    self.road_traffic[tmp_road][t] += 1
-                    self.road_with_id[tmp_road].append(vehicle)
+                    self.road_traffic[tmp_road][t].append(v_id)
 
                 # (3) cal p
                 # self.point_traffic[previous_TS_point[0]][previous_TS_point[1]] += 1
-                self.point_traffic[next_TS_point] += 1
-                self.point_with_id[next_TS_point].append(vehicle)
+                self.point_traffic[next_TS_point].append(v_id)
         
         # (4) cal road_block
         for road, traffic_time in self.road_traffic.items():
-            for t, vehicle_number in traffic_time.items():
-                if vehicle_number > self.b0:
+            for t, vehicle_list in traffic_time.items():
+                if len(vehicle_list) > self.b0:
                     self.road_block[road][t] = 1
-                    for v_id in self.road_with_id[road]:
-                        self.vehicle_penalty[v_id] += 1
 
         # (5) cal point_block
-        for TS_point, vehicle_number in self.point_traffic.items():
-            if vehicle_number > self.p0:
+        for TS_point, vehicle_list in self.point_traffic.items():
+            if len(vehicle_list) > self.p0:
                 self.point_block[TS_point] = 1
-                for v_id in self.point_with_id[road]:
-                    self.vehicle_penalty[v_id] += 1
 
     def objective(self) -> float:
         # TODO implement the objective function
@@ -131,30 +122,30 @@ class ProblemState:
             copy.deepcopy(self.point_traffic), copy.deepcopy(self.road_block), copy.deepcopy(self.point_block)
 
 # destroy
-    def update_from_destroy(self, destroy_nos: np.ndarray):
-        self.destroy_nos = destroy_nos
-        for destroy_no in destroy_nos:
-            assert destroy_no in self.vehicle_routes, f'delete number {destroy_no} does not in the vehicle routes'
-            for arc in self.vehicle_routes[destroy_no]:
-                # (3)r_t
+    def update_from_destroy(self, destroy_ids: np.ndarray):
+        self.destroy_nos = destroy_ids
+        for destroy_id in destroy_ids:
+            assert destroy_id in self.vehicle_routes, f'delete number {destroy_id} does not in the vehicle routes'
+            for arc in self.vehicle_routes[destroy_id]:
+                # (3) r_t
                 tmp_road = (arc[0][0], arc[1][0])
                 for t in range(arc[0][1], arc[1][1]):
-                    self.road_traffic[tmp_road][t] -= 1
-                # (4)p_t
-                self.point_traffic[arc[1]] -= 1
-        # (5)r_b, (6)p_b 
-        for destroy_no in self.destroy_nos:
-            for arc in self.vehicle_routes[destroy_no]:
+                    self.road_traffic[tmp_road][t].remove(destroy_id)
+                # (4) p_t
+                self.point_traffic[arc[1]].remove(destroy_id)
+        # (5) r_b, (6) p_b 
+        for destroy_id in destroy_ids:
+            for arc in self.vehicle_routes[destroy_id]:
                 tmp_road = (arc[0][0],arc[1][0])
                 for t in range(arc[0][1], arc[1][1]):
-                    if self.road_traffic[tmp_road][t] <= self.b0:
+                    if len(self.road_traffic[tmp_road][t]) <= self.b0:
                         self.road_block[tmp_road][t] = 0
-                if self.point_traffic[arc[1]] <= self.p0:
+                if len(self.point_traffic[arc[1]]) <= self.p0:
                     self.point_block[arc[1]] = 0
         # (1) v_r, (2) v_t
-        for destroy_no in destroy_nos:
-            del self.vehicle_routes[destroy_no]
-            del self.vehicle_time[destroy_no]
+        for destroy_id in destroy_ids:
+            del self.vehicle_routes[destroy_id]
+            del self.vehicle_time[destroy_id]
 
     def get_greedy_destroy_no(self):
         
@@ -204,18 +195,19 @@ class ProblemState:
 
     def get_TSRoutes_from_SpaceRoutes_local(self, repair_space_route: dict):     # dict(list(tuple))
         new_TS_routes = defaultdict(list) # defaultdict is not easy for comerge
-        for k, spc_arcs in repair_space_route.items():
+        for v_id, spc_arcs in repair_space_route.items():
             # for each repaired vehicle route, usual only one vehicle destroyed one step
-            start_time = self.start_location[k][1]
+            start_time = self.start_location[v_id][1]
             for spc_arc in spc_arcs:
-                TS_arc, arrival_time = self.calculateTime_from_BlockNo_single(spc_arc, start_time)
-                self.vehicle_time[k] += arrival_time
+                TS_arc, arrival_time = self.calculateTime_from_BlockNo_single(spc_arc, start_time, v_id)
+                self.vehicle_time[v_id] += arrival_time
                 start_time += arrival_time
-                new_TS_routes[k].append(TS_arc)
-            self.vehicle_routes[k] = new_TS_routes[k]
+                new_TS_routes[v_id].append(TS_arc)
+            self.vehicle_routes[v_id] = new_TS_routes[v_id]
         return new_TS_routes
     
     def get_TSRoutes_from_SpaceRoutes_global(self, repair_space_route: defaultdict(list)):
+        self.vehicle_penalty.clear()
         # (1) get all vehicle space routes
         if isinstance(repair_space_route, list):
             des_no = self.get_destroy_nos()
@@ -228,8 +220,8 @@ class ProblemState:
         # (2) get TS route from all space route
         # 2.0 init 
         new_TS_routes = defaultdict(list)
-        new_road_traffic = defaultdict(lambda: defaultdict(int))
-        new_point_traffic = defaultdict(int)  
+        new_road_traffic = defaultdict(lambda: defaultdict(list))
+        new_point_traffic = defaultdict(list)  
         new_vehicle_time = defaultdict(int)                       
         new_road_block = defaultdict(lambda: defaultdict(int))   
         new_point_block = defaultdict(int)
@@ -262,15 +254,15 @@ class ProblemState:
             # 2.1 first count road vehicle number to get global block situation
             for v_id in active_v_ids: 
                 tmp_road = repair_space_route[v_id][arc_index_pointer[v_id]]
-                new_road_traffic[tmp_road][timestep] += 1
+                new_road_traffic[tmp_road][timestep].append(v_id)
                 
             # 2.2 after count we get block and spd, then we could record route length
             for v_id in list(active_v_ids): # list for the error “Set changed size during iteration”
                 tmp_road = repair_space_route[v_id][arc_index_pointer[v_id]]
                 # block or not, which decide the spd
-                if new_road_traffic[tmp_road][timestep] > self.b0:
+                if len(new_road_traffic[tmp_road][timestep]) > self.b0:
                     new_road_block[tmp_road][timestep] = 1
-                    length_stat[v_id] += self.vehicle_speed / 2.0 
+                    length_stat[v_id] += self.vehicle_speed / 2.0
                 else:
                     assert new_road_block[tmp_road][timestep] == 0, 'error block situation'
                     length_stat[v_id] += self.vehicle_speed 
@@ -280,7 +272,7 @@ class ProblemState:
                     arc_index_pointer[v_id] += 1
                     length_stat[v_id] = 0
                     arrived_TS_point = (tmp_road[1], timestep+1)
-                    new_point_traffic[arrived_TS_point] += 1
+                    new_point_traffic[arrived_TS_point].append(v_id)
                     new_TS_routes[v_id].append((prev_TS_point[v_id], arrived_TS_point))
                     prev_TS_point[v_id] = arrived_TS_point
                     tmp_point_index.append(arrived_TS_point)
@@ -291,7 +283,7 @@ class ProblemState:
                     new_vehicle_time[v_id] += arrived_TS_point[1] - self.start_location[v_id][1] # final point time - first point time
             
             for index in tmp_point_index:
-                if new_point_traffic[index] > self.p0:
+                if len(new_point_traffic[index]) > self.p0:
                     new_point_block[index] = 1
             timestep += 1
 
@@ -328,7 +320,7 @@ class ProblemState:
     def get_destroy_nos(self):
         return self.destroy_nos
 
-    def calculateTime_from_BlockNo_single(self, spc_arc, start_time):
+    def calculateTime_from_BlockNo_single(self, spc_arc, start_time, v_id):
         '''
         this step need to sort all vehicle routes to slow down if change to block
         if wanted to reduce the calculate time, 
@@ -338,9 +330,9 @@ class ProblemState:
         length = 0
         tmp_t = 0
         while length < self.space_distance[spc_arc]:
-            self.road_traffic[spc_arc][start_time + tmp_t] += 1
-            # (1) if change to block(b=b0), all vehicle need to slow down
-            if self.road_traffic[spc_arc][start_time + tmp_t] == self.b0:
+            self.road_traffic[spc_arc][start_time + tmp_t].append(v_id)
+            # (1) if change to block(b>b0), all vehicle need to slow down
+            if len(self.road_traffic[spc_arc][start_time + tmp_t]) > self.b0:
                 v_spd = self.vehicle_speed / 2
                 self. road_block[spc_arc][start_time + tmp_t] = 1
             # （2） if already block (b>b0)

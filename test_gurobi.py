@@ -360,16 +360,19 @@ def init_problem_state(start:list, des:list, grid_size:int, v_spd:float, dist:fl
                          vehicle_speed = v_spd, space_distance = graph_distance, space_arc = edges_2dir)
     return problem_state
 
-def setup_alns(seed=42):
+def setup_alns(seed=42, iter_time=10):
     # Create ALNS and add one or more destroy and repair operators
     alns = ALNS(rnd.RandomState(seed=seed))
     alns.add_destroy_operator(random_destroy)
+    #alns.add_destroy_operator(random_destroy)
+
     alns.add_repair_operator(random_repair)
+    #alns.add_repair_operator(normal_repair)
 
     # Configure ALNS
     select = RandomSelect(num_destroy=1, num_repair=1)  # see alns.select for others
     accept = HillClimbing()  # see alns.accept for others
-    iter_time = 10
+    iter_time = iter_time
     stop = MaxRuntime(iter_time)  # 60 seconds; see alns.stop for others
     return alns, select, accept, stop
 
@@ -390,6 +393,9 @@ def random_destroy(current: ProblemState, rnd_state: rnd.RandomState) -> Problem
     next_state.update_from_destroy(destroy_nos=destroy_nos)
     return next_state
 
+def greedy_destroy(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    
+    pass
 '''
 -----------------------------------------------------
 repair

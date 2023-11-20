@@ -13,6 +13,7 @@ from collections import defaultdict
 import ast
 from alns import ALNS
 from alns.accept import HillClimbing
+from alns.select import RouletteWheel
 from alns.select import RandomSelect
 from alns.stop import MaxRuntime
 import numpy.random as rnd
@@ -22,6 +23,7 @@ from my_alns_class import ProblemState
 from tqdm import tqdm
 import pickle
 
+# 上面都是GUROBI的代码
 def test_GUROBI():
     # get random grid
     grid_size = 5
@@ -290,12 +292,7 @@ def get_vars(m:gurobipy.Model):
                 continue
     return x
 
-'''
-上面都是GUROBI的代码
------------------------------------------------------
-下面都是启发式算法的代码
-'''
-
+# 下面都是启发式算法的代码
 def get_init_route():
     pass
 
@@ -360,27 +357,25 @@ def init_problem_state(start:list, des:list, grid_size:int, v_spd:float, dist:fl
                          vehicle_speed = v_spd, space_distance = graph_distance, space_arc = edges_2dir)
     return problem_state
 
-def setup_alns(seed=42, iter_time=10):
+def setup_alns(seed=4256, iter_time=10):
     # Create ALNS and add one or more destroy and repair operators
     alns = ALNS(rnd.RandomState(seed=seed))
-    alns.add_destroy_operator(random_destroy)
-    #alns.add_destroy_operator(random_destroy)
+    alns.add_destroy_operator(greedy_destroy, 'greedy')
+    alns.add_destroy_operator(random_destroy, 'random')
+    
 
     alns.add_repair_operator(random_repair)
     #alns.add_repair_operator(normal_repair)
 
     # Configure ALNS
-    select = RandomSelect(num_destroy=1, num_repair=1)  # see alns.select for others
+    select = RandomSelect(num_destroy=2, num_repair=1)  # see alns.select for others
+    # select = RouletteWheel([3, 2, 1, 0.5], 0.8, 2, 2)
     accept = HillClimbing()  # see alns.accept for others
     iter_time = iter_time
     stop = MaxRuntime(iter_time)  # 60 seconds; see alns.stop for others
     return alns, select, accept, stop
 
-'''
------------------------------------------------------
-destroy
-'''
-
+# destroy
 def destroy(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
     # TODO implement how to destroy the current state, and return the destroyed
     #  state. Make sure to (deep)copy the current state before modifying!
@@ -390,17 +385,18 @@ def random_destroy(current: ProblemState, rnd_state: rnd.RandomState) -> Problem
     destroy_number = 1
     next_state = copy.deepcopy(current)
     destroy_ids = rnd_state.choice(np.arange(0, len(current.vehicle_routes)), destroy_number, replace=False)
-    next_state.update_from_destroy(destroy_ids=destroy_ids)
+    next_state.update_from_destroy(destroy_ids=list(destroy_ids))
     return next_state
 
 def greedy_destroy(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    next_state = copy.deepcopy(current)
+    choice_list = current.get_greedy_destroy_ids()
+    choice_index = rnd_state.choice(len(choice_list))
+    destroy_id = choice_list[choice_index][0]
+    next_state.update_from_destroy(destroy_ids=[destroy_id])
+    return next_state
     
-    pass
-'''
------------------------------------------------------
-repair
-'''
-
+#repair
 def repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
     # TODO implement how to repair a destroyed state, and return it
     pass
@@ -413,6 +409,9 @@ def normal_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> Proble
     destroy_nos = destroyed.get_destroy_nos()
     ttt = destroyed.update_from_normal_repair(destroy_nos)
     return destroyed
+
+def greedy_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    pass
 
 def main():
     num_exp = 50

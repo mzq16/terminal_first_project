@@ -34,7 +34,7 @@ class ProblemState:
         self.T = 0
         self.B = 0
         self.P = 0
-        self.destroy_nos = np.array([]) # ndarray
+        self.destroy_nos = [] # list
         self.bi_space_arc =  self.get_bidirection_arc()
         self.vehicle_penalty = defaultdict(float)
         # check v routes, time-space routes or only space routes
@@ -86,11 +86,15 @@ class ProblemState:
             for t, vehicle_list in traffic_time.items():
                 if len(vehicle_list) > self.b0:
                     self.road_block[road][t] = 1
+                    for v_id in vehicle_list:
+                        self.vehicle_penalty[v_id] += 1
 
         # (5) cal point_block
         for TS_point, vehicle_list in self.point_traffic.items():
             if len(vehicle_list) > self.p0:
                 self.point_block[TS_point] = 1
+                for v_id in vehicle_list:
+                    self.vehicle_penalty[v_id] += 1
 
     def objective(self) -> float:
         # TODO implement the objective function
@@ -122,7 +126,8 @@ class ProblemState:
             copy.deepcopy(self.point_traffic), copy.deepcopy(self.road_block), copy.deepcopy(self.point_block)
 
 # destroy
-    def update_from_destroy(self, destroy_ids: np.ndarray):
+    def update_from_destroy(self, destroy_ids: list):
+        # though destroy_ids is a list, it always contains one  
         self.destroy_nos = destroy_ids
         for destroy_id in destroy_ids:
             assert destroy_id in self.vehicle_routes, f'delete number {destroy_id} does not in the vehicle routes'
@@ -140,17 +145,23 @@ class ProblemState:
                 for t in range(arc[0][1], arc[1][1]):
                     if len(self.road_traffic[tmp_road][t]) <= self.b0:
                         self.road_block[tmp_road][t] = 0
+                        for v_id in self.road_traffic[tmp_road][t]:
+                            self.vehicle_penalty[v_id] -= 1
                 if len(self.point_traffic[arc[1]]) <= self.p0:
                     self.point_block[arc[1]] = 0
+                    for v_id in self.point_traffic[arc[1]]:
+                        self.vehicle_penalty[v_id] -= 1
         # (1) v_r, (2) v_t
         for destroy_id in destroy_ids:
             del self.vehicle_routes[destroy_id]
             del self.vehicle_time[destroy_id]
 
-    def get_greedy_destroy_no(self):
-        
-        pass
+    def get_greedy_destroy_ids(self, thr=0):
+        tmp_list = sorted(self.vehicle_penalty.items(), key=lambda x: x[1], reverse=True)
+        choice_list = [(k, v) for k, v in tmp_list if v > thr]
+        return choice_list
 
+# repair
     def update_from_random_repair(self, rnd_state: rnd.RandomState):
         # (1) get space routes
         repair_space_route = self.get_random_SpaceRoutes(rnd_state=rnd_state)
@@ -171,6 +182,7 @@ class ProblemState:
         repair_TS_route = self.get_TSRoutes_from_SpaceRoutes_global(repair_space_route=space_route_dict)
         return repair_TS_route
 
+# others
     def get_random_SpaceRoutes(self, rnd_state:rnd.RandomState):
         repair_space_route = defaultdict(list)
         for id in self.destroy_nos:
@@ -211,7 +223,8 @@ class ProblemState:
         # (1) get all vehicle space routes
         if isinstance(repair_space_route, list):
             des_no = self.get_destroy_nos()
-            repair_space_route = {des_no:repair_space_route}
+            assert len(des_no) == 1, "error length of destroy ids"
+            repair_space_route = {des_no[0]:repair_space_route}
         if self.vehicle_routes is not None:
             for v_id, TS_arcs in self.vehicle_routes.items():
                 for arc in TS_arcs:
@@ -263,6 +276,8 @@ class ProblemState:
                 if len(new_road_traffic[tmp_road][timestep]) > self.b0:
                     new_road_block[tmp_road][timestep] = 1
                     length_stat[v_id] += self.vehicle_speed / 2.0
+                    for vv_id in new_road_traffic[tmp_road][timestep]:
+                        self.vehicle_penalty[vv_id] += 1
                 else:
                     assert new_road_block[tmp_road][timestep] == 0, 'error block situation'
                     length_stat[v_id] += self.vehicle_speed 
@@ -281,10 +296,12 @@ class ProblemState:
                     finished_id.add(v_id)
                     active_v_ids.remove(v_id)
                     new_vehicle_time[v_id] += arrived_TS_point[1] - self.start_location[v_id][1] # final point time - first point time
-            
+            # point block
             for index in tmp_point_index:
                 if len(new_point_traffic[index]) > self.p0:
                     new_point_block[index] = 1
+                    for vv_id in new_point_traffic[index]:
+                        self.vehicle_penalty[vv_id] += 1
             timestep += 1
 
         # all task finished

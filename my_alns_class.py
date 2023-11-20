@@ -36,6 +36,9 @@ class ProblemState:
         self.P = 0
         self.destroy_nos = np.array([]) # ndarray
         self.bi_space_arc =  self.get_bidirection_arc()
+        self.vehicle_penalty = defaultdict(float)
+        self.road_with_id = defaultdict(list)
+        self.point_with_id = defaultdict(list)
         # check v routes, time-space routes or only space routes
         if time_space_routes:
             self.vehicle_routes = time_space_routes
@@ -76,21 +79,27 @@ class ProblemState:
                 tmp_road = (previous_TS_point[0], next_TS_point[0])
                 for t in range(previous_TS_point[1], next_TS_point[1]):
                     self.road_traffic[tmp_road][t] += 1
+                    self.road_with_id[tmp_road].append(vehicle)
 
                 # (3) cal p
                 # self.point_traffic[previous_TS_point[0]][previous_TS_point[1]] += 1
                 self.point_traffic[next_TS_point] += 1
+                self.point_with_id[next_TS_point].append(vehicle)
         
-        # (4) cal road_block         
+        # (4) cal road_block
         for road, traffic_time in self.road_traffic.items():
             for t, vehicle_number in traffic_time.items():
                 if vehicle_number > self.b0:
-                    self.road_block[road][t] =1
-        
+                    self.road_block[road][t] = 1
+                    for v_id in self.road_with_id[road]:
+                        self.vehicle_penalty[v_id] += 1
+
         # (5) cal point_block
         for TS_point, vehicle_number in self.point_traffic.items():
             if vehicle_number > self.p0:
                 self.point_block[TS_point] = 1
+                for v_id in self.point_with_id[road]:
+                    self.vehicle_penalty[v_id] += 1
 
     def objective(self) -> float:
         # TODO implement the objective function
@@ -121,6 +130,7 @@ class ProblemState:
         return copy.deepcopy(self.vehicle_routes), copy.deepcopy(self.vehicle_time), copy.deepcopy(self.road_traffic), \
             copy.deepcopy(self.point_traffic), copy.deepcopy(self.road_block), copy.deepcopy(self.point_block)
 
+# destroy
     def update_from_destroy(self, destroy_nos: np.ndarray):
         self.destroy_nos = destroy_nos
         for destroy_no in destroy_nos:
@@ -146,6 +156,10 @@ class ProblemState:
             del self.vehicle_routes[destroy_no]
             del self.vehicle_time[destroy_no]
 
+    def get_greedy_destroy_no(self):
+        
+        pass
+
     def update_from_random_repair(self, rnd_state: rnd.RandomState):
         # (1) get space routes
         repair_space_route = self.get_random_SpaceRoutes(rnd_state=rnd_state)
@@ -158,10 +172,12 @@ class ProblemState:
     def update_from_normal_repair(self, destroy_id:int):
         if not isinstance(destroy_id, int):
             destroy_id = int(destroy_id)
-        start_loc = self.start_location[destroy_id]
+        start_loc = self.start_location[destroy_id][0]
         des_loc = self.destinations[destroy_id]
         repair_space_route = self.get_SpaceRoute(edges_2dir=self.bi_space_arc, start_loc=start_loc, des_loc=des_loc)
-        repair_TS_route = self.get_TSRoutes_from_SpaceRoutes_global(repair_space_route=repair_space_route)
+        space_route_dict = defaultdict(list)
+        space_route_dict[destroy_id] = repair_space_route
+        repair_TS_route = self.get_TSRoutes_from_SpaceRoutes_global(repair_space_route=space_route_dict)
         return repair_TS_route
 
     def get_random_SpaceRoutes(self, rnd_state:rnd.RandomState):
@@ -181,7 +197,7 @@ class ProblemState:
             repair_space_route[id].append((int(current_space_point), des))
         return repair_space_route
     
-    def get_SpaceRoute(self, edges_2dir:list, start_loc:tuple, des_loc:tuple):
+    def get_SpaceRoute(self, edges_2dir:list, start_loc:tuple, des_loc:tuple) -> list:
         tmp_path = utils.get_space_path(start=start_loc, des=des_loc, bi_space_arc=edges_2dir)
         tmp_route = utils.path_to_route(tmp_path)
         return tmp_route
@@ -201,6 +217,9 @@ class ProblemState:
     
     def get_TSRoutes_from_SpaceRoutes_global(self, repair_space_route: defaultdict(list)):
         # (1) get all vehicle space routes
+        if isinstance(repair_space_route, list):
+            des_no = self.get_destroy_nos()
+            repair_space_route = {des_no:repair_space_route}
         if self.vehicle_routes is not None:
             for v_id, TS_arcs in self.vehicle_routes.items():
                 for arc in TS_arcs:

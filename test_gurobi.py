@@ -389,8 +389,8 @@ def destroy(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
 def random_destroy(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
     destroy_number = 1
     next_state = copy.deepcopy(current)
-    destroy_nos = rnd_state.choice(np.arange(0, len(current.vehicle_routes)), destroy_number, replace=False)
-    next_state.update_from_destroy(destroy_nos=destroy_nos)
+    destroy_ids = rnd_state.choice(np.arange(0, len(current.vehicle_routes)), destroy_number, replace=False)
+    next_state.update_from_destroy(destroy_ids=destroy_ids)
     return next_state
 
 def greedy_destroy(current: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:

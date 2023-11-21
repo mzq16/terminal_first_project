@@ -189,12 +189,17 @@ class ProblemState:
             id = int(id)
             des = self.destinations[id]
             start_loc = self.start_location[id]
+            prev_space_point = start_loc[0]
             current_space_point = start_loc[0]
             neighbour_point = utils.get_neighbour_point(current_space_point, self.bi_space_arc)
             while des not in neighbour_point:
                 # seleted_point = np.random.choice(neighbour_point, 1)
+                if prev_space_point in neighbour_point:
+                    # pass
+                    neighbour_point.remove(prev_space_point)
                 seleted_point = rnd_state.choice(neighbour_point, 1)
                 repair_space_route[id].append((int(current_space_point), int(seleted_point)))
+                prev_space_point = int(current_space_point)
                 current_space_point = int(seleted_point)
                 neighbour_point = utils.get_neighbour_point(current_space_point, self.bi_space_arc)
             repair_space_route[id].append((int(current_space_point), des))

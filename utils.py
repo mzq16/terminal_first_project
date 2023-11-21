@@ -3,6 +3,8 @@ import heapq
 from collections import deque
 from collections import defaultdict
 from my_alns_class import ProblemState
+import numpy as np
+import numpy.random as rnd
 
 # get graph
 def generate_grid_edges(grid_size) -> list:
@@ -145,4 +147,77 @@ def dijkstra(graph, start):
 
     return distances
 
+def get_simple_dist(point_a:np.ndarray, point_b:np.ndarray):
+    return sum(abs(point_a - point_b))
+
+# 这两个norm的函数跑1e5次，时间：0.5090627670288086 0.37665748596191406，可以看到多次交换确实浪费时间
+def normalize_weight_slow(dist:list, ratio:list = [4,3,2,1]):
+    ratio = np.array(ratio)[:len(dist)]
+    ratio_norm = ratio / sum(ratio)
+    indexed_dist = list(enumerate(dist))                                        # [(0,a),(1,b),(2,c)]
+    sorted_dist = sorted(indexed_dist, key= lambda x: x[1])                     # [(1,b),(2,c),(0,1)] b>c>a
+    element_ranks = [rank for rank, _ in sorted(list(enumerate(sorted_dist)), key=lambda x: x[1][0])]  # [(0,(1,b)),(1,(2,c)),(2,(0,a))] ------> [(2,(0,a)),(0,(1,b)),(1,(2,c))]
+    return [ratio_norm[element_ranks[i]]for i in range(len(ratio_norm))]
+
+def normalize_weight(dist:list, ratio:list = [4,3,2,1]):
+    output = np.zeros(len(dist))
+    ratio = np.array(ratio)[:len(dist)]
+    ratio_norm = ratio / sum(ratio)
+    indexed_dist = list(enumerate(dist))
+    sorted_dist = sorted(indexed_dist, key= lambda x: x[1])
+    p = 0
+    for index, _ in sorted_dist:
+        output[index] = ratio_norm[p]
+        p += 1
+    return output
+
+def get_space_path_onesteplook(edges_2dir: list, graph_dist_2dir:dict, point_xy, v_spd, road_block:defaultdict, 
+                               point_block:defaultdict, start:tuple, des:int, rnd_state:rnd.RandomState, a=1.5,b=0.3):
+    timestep = start[1]
+    arrived = False
+    space_path = [start[0]]
+    current_point = start[0]
+    prev_point = start[0]
+    while not arrived:
+        neighbour_points = get_neighbour_point(current_point=current_point, bi_space_arc=edges_2dir)
+        # check arrived
+        if des in neighbour_points:
+            arrived = True
+            space_path.append(des)
+            break
+        # check neighbour if only got one
+        if len(neighbour_points) == 1:
+            space_path.append(neighbour_points[0])
+            tmp_road = (current_point, neighbour_points[0])
+            normal_time = graph_dist_2dir[tmp_road] / v_spd
+            timestep += int(np.ceil(normal_time))
+            continue
+
+        # not arrived, check every option weight
+        # if restrict the direction
+        if prev_point in neighbour_points:
+            neighbour_points.remove(prev_point)
+
+        # start infer
+        block_penalty = [0 for _ in range(len(neighbour_points))]
+        point_penalty = [0 for _ in range(len(neighbour_points))]
+        route_penalty = []
+        for i in range(len(neighbour_points)):
+            tmp_road = (current_point, neighbour_points[i])
+            normal_time = int(np.ceil(graph_dist_2dir[tmp_road] / v_spd))
+            for tt in range(normal_time):
+                block_penalty[i] += road_block[tmp_road][timestep + tt]
+            point_penalty[i] += point_block[(neighbour_points[i], timestep + normal_time)]
+            route_penalty.append(get_simple_dist(point_xy[neighbour_points[i]], des))
+        route_weight = normalize_weight(route_penalty)
+        block_weight = normalize_weight(block_penalty)
+        point_weight = normalize_weight(point_penalty)
+        total_weight = route_weight + a * block_weight + b * point_weight
+        weight_norm = total_weight / sum(total_weight)
+        select_point = int(rnd_state.choice(neighbour_points, size=1, p=weight_norm))
+        space_path.append(select_point)
+        prev_point = current_point
+        current_point = select_point
+        timestep += normal_time
+    return space_path
 

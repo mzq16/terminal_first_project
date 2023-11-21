@@ -340,9 +340,11 @@ def test_heuristic():
 def init_problem_state(start:list, des:list, grid_size:int, v_spd:float, dist:float) -> ProblemState:
     OD_pairs = utils.get_OD_pair(start=start, des=des)
     space_routes = defaultdict(list)
+
     # get graph
     edges = utils.generate_grid_edges(grid_size=grid_size)
     edges_2dir = utils.to_2dir(edges)
+
     # get TS routes
     for i in range(len(OD_pairs)):
         tmp_path = utils.get_space_path(start=OD_pairs[i][0], des=OD_pairs[i][1], bi_space_arc=edges_2dir)
@@ -352,9 +354,16 @@ def init_problem_state(start:list, des:list, grid_size:int, v_spd:float, dist:fl
     # get graph distance
     graph_distance = utils.get_graph_dist(edges_2dir=edges_2dir, dist=dist)
 
+    # get point coordinates
+    point_xy = {}
+    for i in range(grid_size):
+        for j in range(grid_size):
+            point_xy[i*grid_size+j] = np.array([j,i]) 
+
     # get init state 
     problem_state = ProblemState(space_routes = space_routes, destinations = des, start_location = start, 
-                         vehicle_speed = v_spd, space_distance = graph_distance, space_arc = edges_2dir)
+                                 point_xy = point_xy,vehicle_speed = v_spd, space_distance = graph_distance, 
+                                 space_arc = edges)
     return problem_state
 
 def setup_alns(seed=4256, iter_time=10):
@@ -364,8 +373,8 @@ def setup_alns(seed=4256, iter_time=10):
     alns.add_destroy_operator(random_destroy, 'random')
     
 
-    alns.add_repair_operator(random_repair)
-    #alns.add_repair_operator(normal_repair)
+    #alns.add_repair_operator(random_repair)
+    alns.add_repair_operator(onstep_repair)
 
     # Configure ALNS
     select = RandomSelect(num_destroy=2, num_repair=1)  # see alns.select for others
@@ -408,6 +417,10 @@ def random_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> Proble
 def normal_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
     destroy_nos = destroyed.get_destroy_nos()
     ttt = destroyed.update_from_normal_repair(destroy_nos)
+    return destroyed
+
+def onstep_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
+    ttt = destroyed.update_from_onestep_repair(rnd_state=rnd_state)
     return destroyed
 
 def greedy_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:

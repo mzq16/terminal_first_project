@@ -17,8 +17,9 @@ class ProblemState:
                  time_space_routes: defaultdict(list) = None,
                  destinations: list = None, 
                  start_location: list = None, 
+                 point_xy: list = None,
                  vehicle_speed: float = 1.0,
-                 space_distance: float = 2.0,
+                 space_distance: list = None,
                  space_arc: list = None,
                  random_size = None,
                  b0: int = 1, 
@@ -26,7 +27,10 @@ class ProblemState:
                  init_flag = True) -> None:
         self.destinations = destinations
         self.start_location = start_location
+        assert point_xy, "do not receive coordinates"
+        self.point_xy = point_xy
         self.vehicle_speed = vehicle_speed
+        assert space_distance, "do not receive space distance"
         self.space_distance = space_distance
         self.space_arc = space_arc
         self.b0 = b0
@@ -177,6 +181,24 @@ class ProblemState:
         start_loc = self.start_location[destroy_id][0]
         des_loc = self.destinations[destroy_id]
         repair_space_route = self.get_SpaceRoute(edges_2dir=self.bi_space_arc, start_loc=start_loc, des_loc=des_loc)
+        space_route_dict = defaultdict(list)
+        space_route_dict[destroy_id] = repair_space_route
+        repair_TS_route = self.get_TSRoutes_from_SpaceRoutes_global(repair_space_route=space_route_dict)
+        return repair_TS_route
+
+    def update_from_onestep_repair(self, rnd_state: rnd.RandomState):
+        # (1) get destroy id
+        destroy_ids = self.get_destroy_nos()
+        assert len(destroy_ids) == 1,'error length destroy id'
+        destroy_id = int(destroy_ids[0])
+        start_loc = self.start_location[destroy_id]
+        des = self.destinations[destroy_id]
+        # (2) get space routes
+        repair_space_path = utils.get_space_path_onesteplook(edges_2dir=self.bi_space_arc, 
+                                              graph_dist_2dir=self.space_distance, point_xy=self.point_xy, 
+                                              v_spd=self.vehicle_speed, road_block=self.road_block, 
+                               point_block=self.point_block, start=start_loc, des=des, rnd_state=rnd_state, a=1.5,b=0.3)
+        repair_space_route = utils.path_to_route(repair_space_path)
         space_route_dict = defaultdict(list)
         space_route_dict[destroy_id] = repair_space_route
         repair_TS_route = self.get_TSRoutes_from_SpaceRoutes_global(repair_space_route=space_route_dict)

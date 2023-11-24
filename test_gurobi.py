@@ -13,6 +13,7 @@ from collections import defaultdict
 import ast
 from alns import ALNS
 from alns.accept import HillClimbing
+from alns.accept import RecordToRecordTravel
 from alns.select import RouletteWheel
 from alns.select import RandomSelect
 from alns.stop import MaxRuntime
@@ -29,7 +30,7 @@ def test_GUROBI():
     grid_size = 5
     start = [(0,0),(2,1),(5,2),(11,3),(17,4),(23,5)]
     des = [4,22,24,4,0,11]
-    m, total_time, setV_time, setCons_time = buildup_regular(grid_size=grid_size, start=start, des=des, number_vehicle=6)
+    m, total_time, setV_time, setCons_time, ttt = buildup_regular(grid_size=grid_size, start=start, des=des, number_vehicle=6)
     print(f'total_time:{total_time}, setV_time:{setV_time}, setCons_time:{setCons_time}')
     start_cal_time = time.time()
     m.optimize()
@@ -270,18 +271,23 @@ def buildup_regular(grid_size: int=5, start: list=None, des: list=None,
 
     return m, total_time, setV_time, setCons_time, ttt
 
-def get_vars(m:gurobipy.Model):
+def get_vars(m:gurobipy.Model, b0, p0):
     '''
     could find the name formation in the buildup function
     name=f'x_{i}_{j}_{k}', e.g. 'x_(0,1)_(0,2)_1'
     '''
     x = defaultdict(list)  # x['1'] = [((0,1),(1,2)),((1,2),(2,3)), ...] 
+    block_number = {}
+    total = {}
+    point_block = {}
+    numbrt_v_road_block = {}
     for v in m.getVars():
         tmp_name = v.varName
         tmp_value = v.x
         split_name = tmp_name.split('_')
         if len(split_name) == 0:
             continue
+        # routes
         elif split_name[0] == 'x':
             if tmp_value > 0.5:
                 i_tuple = ast.literal_eval(split_name[1])
@@ -290,7 +296,27 @@ def get_vars(m:gurobipy.Model):
                 x[k_ind].append((i_tuple, j_tuple))
             else:
                 continue
-    return x
+        # road block number vehicle
+        elif split_name[0] == 'numberofvehicle':
+            if tmp_value > b0:
+                numbrt_v_road_block[tmp_name] = tmp_value
+        # block number and point block number
+        elif split_name[0] == 'block':
+            if split_name[1] == 'number':
+                block_number[tmp_name] = tmp_value
+            else:
+                if tmp_value > p0:
+                    point_block[tmp_name] = tmp_value
+        # total task time and corner block number
+        elif split_name[0] == 'total':
+            total[tmp_name] = tmp_value
+    other_info = {
+        'block_number':block_number,
+        'total':total,
+        'point_block':point_block,
+        'road_block':numbrt_v_road_block,
+                  }
+    return x, other_info
 
 # 下面都是启发式算法的代码
 def get_init_route():
@@ -336,7 +362,7 @@ def test_heuristic():
     print(f"Best heuristic solution objective is {best.objective()}.")
 
     return result
-    
+
 def init_problem_state(start:list, des:list, grid_size:int, v_spd:float, dist:float) -> ProblemState:
     OD_pairs = utils.get_OD_pair(start=start, des=des)
     space_routes = defaultdict(list)
@@ -366,21 +392,21 @@ def init_problem_state(start:list, des:list, grid_size:int, v_spd:float, dist:fl
                                  space_arc = edges)
     return problem_state
 
-def setup_alns(seed=4256, iter_time=10):
+def setup_alns(seed=4256, iter_time=10, init_obj=None):
     # Create ALNS and add one or more destroy and repair operators
     alns = ALNS(rnd.RandomState(seed=seed))
     alns.add_destroy_operator(greedy_destroy, 'greedy')
     alns.add_destroy_operator(random_destroy, 'random')
     
 
-    #alns.add_repair_operator(random_repair)
-    alns.add_repair_operator(onstep_repair)
+    alns.add_repair_operator(random_repair,'random')
+    alns.add_repair_operator(onstep_repair, 'onestep')
 
     # Configure ALNS
-    select = RandomSelect(num_destroy=2, num_repair=1)  # see alns.select for others
-    # select = RouletteWheel([3, 2, 1, 0.5], 0.8, 2, 2)
+    # select = RandomSelect(num_destroy=2, num_repair=2)  # see alns.select for others
+    select = RouletteWheel([5, 3, 1, 0.5], 0.8, 2, 2)
     accept = HillClimbing()  # see alns.accept for others
-    iter_time = iter_time
+    #accept = RecordToRecordTravel.autofit(init_obj,0.02,0,80000)
     stop = MaxRuntime(iter_time)  # 60 seconds; see alns.stop for others
     return alns, select, accept, stop
 
@@ -401,10 +427,10 @@ def greedy_destroy(current: ProblemState, rnd_state: rnd.RandomState) -> Problem
     next_state = copy.deepcopy(current)
     choice_list = current.get_greedy_destroy_ids()
     choice_index = rnd_state.choice(len(choice_list))
-    destroy_id = choice_list[choice_index][0]
+    destroy_id = choice_list[choice_index]
     next_state.update_from_destroy(destroy_ids=[destroy_id])
     return next_state
-    
+
 #repair
 def repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
     # TODO implement how to repair a destroyed state, and return it
@@ -427,14 +453,14 @@ def greedy_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> Proble
     pass
 
 def main():
-    num_exp = 50
+    num_exp = 1
     experiments_data = []
     for exp_id in range(1, num_exp + 1):
         print('-------------------------------------------------------')
         print(f'start {exp_id} experiment')
-        n_vehicle = 50
+        n_vehicle = 100
         grid_size = 8
-        dist = 2.0
+        dist = 1.0
         v_spd = 1.0
         
         # generate random OD
@@ -453,6 +479,7 @@ def main():
             = buildup_regular(grid_size=grid_size, start=start, des=des, number_vehicle=n_vehicle, 
                             distance=dist, v=v_spd)
         m.setParam('OutputFlag', 0)
+        m.Params.TimeLimit = 1200
         print(f'total_time:{total_time}, setV_time:{setV_time}, setCons_time:{setCons_time}')
         print(ttt)
         print('start optimize')
@@ -460,7 +487,7 @@ def main():
         m.optimize()
         cal_time = time.time() - start_gurobi_time
         print(f'cal_time:{cal_time}')
-        result_x = get_vars(m=m)
+        result_x, other_info = get_vars(m=m, b0=1, p0=1)
         gurobi_time = {
             'opt_time':cal_time,
             'total_time':total_time,
@@ -471,6 +498,7 @@ def main():
 
         experiment_data = {
             'experiment_id':exp_id,
+            'number_vehicle':n_vehicle,
             'result_route_gurobi':result_x,
             'start_node':start,
             'destination':des,
@@ -478,31 +506,47 @@ def main():
             'distance':dist,
             'grid_size':grid_size,
             'times':gurobi_time,
+            'gurobi_obj':m.objVal,
+            'other_info':other_info,
         }
-
-        with open(f'experiment_{exp_id}.pkl', 'wb') as file:
-            pickle.dump(experiment_data, file)
-        experiments_data.append(experiment_data)
+        gurobi_time = total_time + cal_time
+    # finish gurobi
     
-    # finish loop
-    with open(f'all_experiments.pkl', 'wb') as file:
-        pickle.dump(experiments_data, file)
         # alns 
-        '''
+        ''''''
         t0 = time.time()
         problem_state = init_problem_state(start=start, des=des, grid_size=grid_size, v_spd=v_spd, dist=dist)
         init_time = time.time() - t0
         print(f'inital time: {init_time}')
-
-        alns, select, accept, stop = setup_alns()
+        print(f'alns iterate time:{gurobi_time/2}')
+        alns, select, accept, stop = setup_alns(iter_time=np.ceil(gurobi_time/2))
         result = alns.iterate(problem_state, select, accept, stop)
 
         # Retrieve the final solution
         best = result.best_state
         print(f"Best heuristic solution objective is {best.objective()}.")
         gurobi_best = m.objVal
-        print(f'gurobi:{gurobi_best}, alns:{best.objective()}, {best.objective()/gurobi_best}')
-        '''
+        
+
+        # record data
+        revised_obj = utils.cal_alns_obj_from_gurobi(experiment_data)
+        experiment_data['gurobi_obj_revised'] = revised_obj
+        print(f'gurobi:{gurobi_best}, alns:{best.objective()}, revised:{revised_obj}, revised_rate:{best.objective()/revised_obj}')
+        experiment_data['alns_obj'] = result.best_state.objective()
+        experiment_data['alns_record'] = result.statistics.objectives
+        experiment_data['rate'] = result.best_state.objective() / experiment_data['gurobi_obj']
+        experiment_data['rate_revised'] = result.best_state.objective() / experiment_data['gurobi_obj_revised']
+        experiment_data['result_route_alns'] = result.best_state.vehicle_routes
+
+        with open(f'experiment_{exp_id}_both_8.pkl', 'wb') as file:
+            pickle.dump(experiment_data, file)
+        experiments_data.append(experiment_data)
+
+    # finish loop
+    with open(f'all_experiments_both_8.pkl', 'wb') as file:
+        pickle.dump(experiments_data, file)    
+    return None
+
 
 
 if __name__ == '__main__':

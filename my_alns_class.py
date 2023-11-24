@@ -83,7 +83,8 @@ class ProblemState:
 
                 # (3) cal p
                 # self.point_traffic[previous_TS_point[0]][previous_TS_point[1]] += 1
-                self.point_traffic[next_TS_point].append(v_id)
+                #if next_TS_point[0] != self.destinations[v_id]:
+                self.point_traffic[previous_TS_point].append(v_id)
         
         # (4) cal road_block
         for road, traffic_time in self.road_traffic.items():
@@ -162,7 +163,9 @@ class ProblemState:
 
     def get_greedy_destroy_ids(self, thr=0):
         tmp_list = sorted(self.vehicle_penalty.items(), key=lambda x: x[1], reverse=True)
-        choice_list = [(k, v) for k, v in tmp_list if v > thr]
+        choice_list = [k for k, v in tmp_list if v > thr]
+        if len(choice_list) == 0:
+            choice_list = [k for k, v in self.vehicle_routes.items()]
         return choice_list
 
 # repair
@@ -197,13 +200,22 @@ class ProblemState:
         repair_space_path = utils.get_space_path_onesteplook(edges_2dir=self.bi_space_arc, 
                                               graph_dist_2dir=self.space_distance, point_xy=self.point_xy, 
                                               v_spd=self.vehicle_speed, road_block=self.road_block, 
-                               point_block=self.point_block, start=start_loc, des=des, rnd_state=rnd_state, a=1.5,b=0.3)
+                               point_block=self.point_block, start=start_loc, des=des, rnd_state=rnd_state, a=2.0,b=0.5)
         repair_space_route = utils.path_to_route(repair_space_path)
         space_route_dict = defaultdict(list)
         space_route_dict[destroy_id] = repair_space_route
         repair_TS_route = self.get_TSRoutes_from_SpaceRoutes_global(repair_space_route=space_route_dict)
         return repair_TS_route
 
+    def update_from_greedy_repair(self, rnd_state: rnd.RandomState):
+        # (1) get destroy id
+        destroy_ids = self.get_destroy_nos()
+        assert len(destroy_ids) == 1,'error length destroy id'
+        destroy_id = int(destroy_ids[0])
+        start_loc = self.start_location[destroy_id]
+        des = self.destinations[destroy_id]
+
+        
 # others
     def get_random_SpaceRoutes(self, rnd_state:rnd.RandomState):
         repair_space_route = defaultdict(list)

@@ -6,7 +6,7 @@ from my_alns_class import ProblemState
 import numpy as np
 import numpy.random as rnd
 
-# get graph
+# graph function
 def generate_grid_edges(grid_size) -> list:
     if grid_size < 1:
         return []
@@ -35,6 +35,13 @@ def to_2dir(space_arc: list) -> list:
     for tup in space_arc:
         new_space_arc.append((tup[1],tup[0]))
     return space_arc + new_space_arc
+
+def generate_poiny_xy(grid_size):
+    point_xy = {}
+    for i in range(grid_size):
+        for j in range(grid_size):
+            point_xy[i*grid_size+j] = np.array([j,i])
+    return point_xy
 
 # get function
 def get_neighbour_point(current_point, bi_space_arc) -> list:
@@ -108,8 +115,13 @@ def cal_alns_obj_from_gurobi(gurobi_data):
     edges_2dir = to_2dir(edges)
     ts_routes = sort_ts_routes(gurobi_data['result_route_gurobi'])
     graph_distance = get_graph_dist(edges_2dir=edges_2dir,dist=gurobi_data['distance'])
+    point_xy = {}
+    grid_size = gurobi_data['grid_size']
+    for i in range(grid_size):
+        for j in range(grid_size):
+            point_xy[i*grid_size+j] = np.array([j,i])
     problem_state = ProblemState(time_space_routes = ts_routes, destinations = des, start_location = start, 
-                            vehicle_speed = v_spd, space_distance = graph_distance, space_arc = edges_2dir)
+                            vehicle_speed = v_spd, space_distance = graph_distance, space_arc = edges, point_xy=point_xy)
     return problem_state.objective()
 
 def dijkstra(graph, start):
@@ -134,7 +146,12 @@ def dijkstra(graph, start):
         current_distance, current_node = heapq.heappop(priority_queue)
 
         # Check if the current distance is already greater than the known shortest distance
-        if current_distance > distances[current_node]:
+        # 思路就是队列新来一个点，如果比我们有的大，那就不管，continue
+        # 然后如果比我们的小，就管一下：
+        # 比我们现有的小，那么我们先更新一下这个点的neighbour
+        # 没更新的就不变，更新了的就加入到队列中
+        # 那么队列的意思就是等待更新的，当队列清空了，意味着没有需要更新的
+        if current_distance > distances[current_node]:          # 这地方有点误解，distances里面才是我们先有的，curr那个其实是队列新来的
             continue
 
         for neighbor, weight in graph[current_node]:
@@ -221,3 +238,53 @@ def get_space_path_onesteplook(edges_2dir: list, graph_dist_2dir:dict, point_xy,
         timestep += normal_time
     return space_path
 
+def get_space_path_greedy(grid_size:int, edges_2dir: list, graph_dist_2dir:dict, point_xy, v_spd, road_block:defaultdict, 
+                          point_block:defaultdict, start:tuple, des:int, rnd_state:rnd.RandomState, a=1.5,b=0.3):
+    start_node = start[0]
+    start_time = start[1]
+    arrived = False
+    path_nodes = defaultdict(list)           # {1:[(space, time)]}
+    penalty_nodes = defaultdict(float)
+    shortest_space_path = [start[0]]
+    current_point = start_node
+    prev_point = start_node
+    visited = set([start_node])
+    none_visited = set([i for i in range(grid_size**2) if i != start_node])
+    new_visited = set()
+
+    '''
+    思路就是管理两个set，一个是visited，一个是没有，然后while none-visited
+    做一个生成树，每次拉一个距离树最小距离的节点，然后更新邻居，只更新邻居，是否更新visited里面的就不清楚了
+    原dijkstra是针对有向无环，所以没有这个问题
+
+    '''
+    while none_visited:
+        for current_point in new_visited:
+            neighbour_points = get_neighbour_point(current_point=current_point, bi_space_arc=edges_2dir)
+            tmp_t = path_nodes[current_point][-1][1]
+            for neighbour_p in neighbour_points:
+                tmp_road = (current_point, neighbour_p)
+                # check if block 
+                tmp_block_t = int(np.ceil(2 * graph_dist_2dir[tmp_road] / v_spd))
+                block_list = [road_block[tmp_road][tmp_t + i] for i in range(tmp_block_t)]
+                pass_time, block_number = cal_pass_time(block_list, graph_dist_2dir[tmp_road], v_spd)
+                
+                new_penalty = penalty_nodes[current_point] + point_block[(neighbour_p, tmp_t + pass_time)] + pass_time + block_number
+                if penalty_nodes[neighbour_p] !=0 and penalty_nodes[neighbour_p] > new_penalty:
+                    path_nodes[neighbour_p] = path_nodes[current_point].append((neighbour_p, tmp_t + pass_time))
+        
+            
+
+def cal_pass_time(block_:list, road_dist:float, speed:float):
+    tmp_d = 0
+    b_count = 0
+    for i in len(block_):
+        if tmp_d >= road_dist:
+            break
+        if block_[i]:
+            tmp_d += speed / 2
+            b_count += 1
+        else:
+            tmp_d += speed
+    return i, b_count
+         

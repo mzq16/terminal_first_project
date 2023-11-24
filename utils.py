@@ -238,19 +238,22 @@ def get_space_path_onesteplook(edges_2dir: list, graph_dist_2dir:dict, point_xy,
         timestep += normal_time
     return space_path
 
-def get_space_path_greedy(grid_size:int, edges_2dir: list, graph_dist_2dir:dict, point_xy, v_spd, road_block:defaultdict, 
-                          point_block:defaultdict, start:tuple, des:int, rnd_state:rnd.RandomState, a=1.5,b=0.3):
+def get_TSspace_path_greedy(grid_size:int, edges_2dir:list, graph_dist_2dir:dict, v_spd:float, road_block:defaultdict, 
+                          point_block:defaultdict, start:tuple, des:int):
     start_node = start[0]
     start_time = start[1]
-    arrived = False
-    path_nodes = defaultdict(list)           # {1:[(space, time)]}
-    penalty_nodes = defaultdict(float)
-    shortest_space_path = [start[0]]
+    path_nodes = {}                      # {1:[(space, time)]}
+    penalty_nodes = {}                 # {1:0}
+    for i in range(grid_size**2):
+        path_nodes[i] = []
+        penalty_nodes[i] = float(np.inf)
+    path_nodes[start_node].append(start)
+    penalty_nodes[start_node] = 0
     current_point = start_node
     prev_point = start_node
     visited = set([start_node])
-    none_visited = set([i for i in range(grid_size**2) if i != start_node])
-    new_visited = set()
+    wait4update = set([i for i in range(grid_size**2)])
+    wait4update.remove(start_node)
 
     '''
     思路就是管理两个set，一个是visited，一个是没有，然后while none-visited
@@ -258,27 +261,50 @@ def get_space_path_greedy(grid_size:int, edges_2dir: list, graph_dist_2dir:dict,
     原dijkstra是针对有向无环，所以没有这个问题
 
     '''
-    while none_visited:
-        for current_point in new_visited:
-            neighbour_points = get_neighbour_point(current_point=current_point, bi_space_arc=edges_2dir)
-            tmp_t = path_nodes[current_point][-1][1]
-            for neighbour_p in neighbour_points:
-                tmp_road = (current_point, neighbour_p)
-                # check if block 
-                tmp_block_t = int(np.ceil(2 * graph_dist_2dir[tmp_road] / v_spd))
-                block_list = [road_block[tmp_road][tmp_t + i] for i in range(tmp_block_t)]
-                pass_time, block_number = cal_pass_time(block_list, graph_dist_2dir[tmp_road], v_spd)
-                
-                new_penalty = penalty_nodes[current_point] + point_block[(neighbour_p, tmp_t + pass_time)] + pass_time + block_number
-                if penalty_nodes[neighbour_p] !=0 and penalty_nodes[neighbour_p] > new_penalty:
-                    path_nodes[neighbour_p] = path_nodes[current_point].append((neighbour_p, tmp_t + pass_time))
-        
+    while wait4update:
+        neighbour_points = get_neighbour_point(current_point=current_point, bi_space_arc=edges_2dir)
+        if prev_point in neighbour_points:
+            neighbour_points.remove(prev_point)
+        tmp_t = path_nodes[current_point][-1][1]
+        # update all new dist
+        # 是否会更新更新了点的邻居
+        # 如果也更新的话，就会一直更新下去直到最优，时间开销不一定很容易搞定
+        # 但其实也不一定，因为算上时间的penalty，基本上稍微绕绕圈子开penalty就不会小，所以不会更新
+        for neighbour_p in neighbour_points:
+            tmp_road = (current_point, neighbour_p)
+            # check if block 
+            tmp_block_t = int(np.ceil(2 * graph_dist_2dir[tmp_road] / v_spd))
+            block_list = [road_block[tmp_road][tmp_t + i] for i in range(tmp_block_t)]
+            pass_time, block_number = cal_pass_time(block_list, graph_dist_2dir[tmp_road], v_spd)
+            new_penalty = penalty_nodes[current_point] + point_block[(neighbour_p, tmp_t + pass_time)] + pass_time + block_number
+            # compare and update
+            if penalty_nodes[neighbour_p] > new_penalty:
+                penalty_nodes[neighbour_p] = new_penalty
+                path_nodes[neighbour_p] = path_nodes[current_point] + [(neighbour_p, tmp_t + pass_time)]
+                # 如果更新，就说明这个点的相邻点也需要更新，因此重新放入更新池中，如果时间太长，这一段可以注释
+                if neighbour_p in visited and neighbour_p != start_node:
+                    visited.remove(neighbour_p)
+                    wait4update.add(neighbour_p)
+        # 传入lambda中的x是dict的key，如果写成d.items()，这样传入x的就是（key,value)
+        # e.g. min([(k,v) for k,v in penalty_nodes.items()]，key = lambda x: x[1])
+        #   min_pen_node = min(penalty_nodes, key = lambda x: penalty_nodes[x]) 这两个是等价
+        # 推测dict 传过去是key， list 传过去是元素
+        # 我也不知道这是为啥，不过感觉写出来更灵活一些，下面就是这个例子
+        min_penalty_node, penalty = min([(k,v) for k,v in penalty_nodes.items() if k in wait4update],key = lambda x: x[1])
+        # 我们从wait for update中的点挑选一个距离最近的点，来更新周围的点，
+        visited.add(min_penalty_node)
+        wait4update.remove(min_penalty_node)
+        current_point = min_penalty_node
+    # all visited
+    return path_nodes[des]
+    
+
             
 
 def cal_pass_time(block_:list, road_dist:float, speed:float):
     tmp_d = 0
     b_count = 0
-    for i in len(block_):
+    for i in range(len(block_)):
         if tmp_d >= road_dist:
             break
         if block_[i]:

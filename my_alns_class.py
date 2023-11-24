@@ -18,6 +18,7 @@ class ProblemState:
                  destinations: list = None, 
                  start_location: list = None, 
                  point_xy: list = None,
+                 grid_size: int = 5,
                  vehicle_speed: float = 1.0,
                  space_distance: list = None,
                  space_arc: list = None,
@@ -27,6 +28,7 @@ class ProblemState:
                  init_flag = True) -> None:
         self.destinations = destinations
         self.start_location = start_location
+        self.grid_size = grid_size
         assert point_xy, "do not receive coordinates"
         self.point_xy = point_xy
         self.vehicle_speed = vehicle_speed
@@ -214,6 +216,9 @@ class ProblemState:
         destroy_id = int(destroy_ids[0])
         start_loc = self.start_location[destroy_id]
         des = self.destinations[destroy_id]
+        repair_TS_path = utils.get_TSspace_path_greedy(grid_size=self.grid_size, edges_2dir=self.bi_space_arc, graph_dist_2dir=self.space_distance, 
+                              v_spd=self.v_spd,road_block=self.road_block,point_block=self.point_block,
+                              start=self.start_location[0], des=self.destinations[0])
 
         
 # others

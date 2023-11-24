@@ -401,10 +401,11 @@ def setup_alns(seed=4256, iter_time=10, init_obj=None):
 
     alns.add_repair_operator(random_repair,'random')
     alns.add_repair_operator(onstep_repair, 'onestep')
+    alns.add_repair_operator(greedy_repair, 'greedy')
 
     # Configure ALNS
     # select = RandomSelect(num_destroy=2, num_repair=2)  # see alns.select for others
-    select = RouletteWheel([5, 3, 1, 0.5], 0.8, 2, 2)
+    select = RouletteWheel([5, 3, 1, 0.5], 0.8, 2, 3)
     accept = HillClimbing()  # see alns.accept for others
     #accept = RecordToRecordTravel.autofit(init_obj,0.02,0,80000)
     stop = MaxRuntime(iter_time)  # 60 seconds; see alns.stop for others
@@ -450,7 +451,8 @@ def onstep_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> Proble
     return destroyed
 
 def greedy_repair(destroyed: ProblemState, rnd_state: rnd.RandomState) -> ProblemState:
-    pass
+    ttt = destroyed.update_from_greedy_repair(rnd_state=rnd_state)
+    return destroyed
 
 def main():
     num_exp = 1
@@ -458,8 +460,8 @@ def main():
     for exp_id in range(1, num_exp + 1):
         print('-------------------------------------------------------')
         print(f'start {exp_id} experiment')
-        n_vehicle = 100
-        grid_size = 8
+        n_vehicle = 20
+        grid_size = 5
         dist = 1.0
         v_spd = 1.0
         
@@ -538,12 +540,12 @@ def main():
         experiment_data['rate_revised'] = result.best_state.objective() / experiment_data['gurobi_obj_revised']
         experiment_data['result_route_alns'] = result.best_state.vehicle_routes
 
-        with open(f'experiment_{exp_id}_both_8.pkl', 'wb') as file:
+        with open(f'experiment_{exp_id}_both_greedy.pkl', 'wb') as file:
             pickle.dump(experiment_data, file)
         experiments_data.append(experiment_data)
 
     # finish loop
-    with open(f'all_experiments_both_8.pkl', 'wb') as file:
+    with open(f'all_experiments_both_greedy.pkl', 'wb') as file:
         pickle.dump(experiments_data, file)    
     return None
 

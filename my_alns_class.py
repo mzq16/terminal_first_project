@@ -217,9 +217,26 @@ class ProblemState:
         start_loc = self.start_location[destroy_id]
         des = self.destinations[destroy_id]
         repair_TS_path = utils.get_TSspace_path_greedy(grid_size=self.grid_size, edges_2dir=self.bi_space_arc, graph_dist_2dir=self.space_distance, 
-                              v_spd=self.v_spd,road_block=self.road_block,point_block=self.point_block,
-                              start=self.start_location[0], des=self.destinations[0])
+                              v_spd=self.vehicle_speed,road_traffic=self.road_block,point_traffic=self.point_block,
+                              start=start_loc, des=des, b0=self.b0, p0=self.p0)
+        # 这个path是[(s1,t1),(s2,t2)]
+        # 可以考虑两种情况，一种是直接用，之后对于每一种违规给一个penalty
+        # 第二种是，转成space route，然后重新推一边，下面先两种
+        # (1) 这样很多block situation是乱的
+        #repair_TS_route = []
+        #for i in range(len(repair_TS_path - 1)):
+        #    repair_TS_route.append((repair_TS_path[i], repair_TS_path[i + 1]))
+        #self.vehicle_routes[destroy_id] = repair_TS_route
 
+        # (2) 花时间太多了，先试试
+        # to space route
+        repair_space_route = []
+        space_route_dict = defaultdict(list)
+        for i in range(len(repair_TS_path) - 1):
+            repair_space_route.append((repair_TS_path[i][0], repair_TS_path[i + 1][0]))
+        space_route_dict[destroy_id] = repair_space_route
+        repair_TS_route = self.get_TSRoutes_from_SpaceRoutes_global(repair_space_route=space_route_dict)
+        return repair_TS_route
         
 # others
     def get_random_SpaceRoutes(self, rnd_state:rnd.RandomState):

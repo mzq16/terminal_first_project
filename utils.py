@@ -238,8 +238,8 @@ def get_space_path_onesteplook(edges_2dir: list, graph_dist_2dir:dict, point_xy,
         timestep += normal_time
     return space_path
 
-def get_TSspace_path_greedy(grid_size:int, edges_2dir:list, graph_dist_2dir:dict, v_spd:float, road_block:defaultdict, 
-                          point_block:defaultdict, start:tuple, des:int):
+def get_TSspace_path_greedy(grid_size:int, edges_2dir:list, graph_dist_2dir:dict, v_spd:float, road_traffic:defaultdict, 
+                          point_traffic:defaultdict, start:tuple, des:int, b0:int, p0:int):
     start_node = start[0]
     start_time = start[1]
     path_nodes = {}                      # {1:[(space, time)]}
@@ -274,9 +274,11 @@ def get_TSspace_path_greedy(grid_size:int, edges_2dir:list, graph_dist_2dir:dict
             tmp_road = (current_point, neighbour_p)
             # check if block 
             tmp_block_t = int(np.ceil(2 * graph_dist_2dir[tmp_road] / v_spd))
-            block_list = [road_block[tmp_road][tmp_t + i] for i in range(tmp_block_t)]
-            pass_time, block_number = cal_pass_time(block_list, graph_dist_2dir[tmp_road], v_spd)
-            new_penalty = penalty_nodes[current_point] + point_block[(neighbour_p, tmp_t + pass_time)] + pass_time + block_number
+            block_list = [road_traffic[tmp_road][tmp_t + i] for i in range(tmp_block_t)]
+            pass_time, block_situation = cal_pass_time(block_list, graph_dist_2dir[tmp_road], v_spd, b0)
+            block_n = sum(block_situation)
+            is_point_block = point_traffic[(neighbour_p, tmp_t + pass_time)] + 1 > p0
+            new_penalty = penalty_nodes[current_point] + is_point_block * (point_traffic[(neighbour_p, tmp_t + pass_time)] + 1) + pass_time + block_n
             # compare and update
             if penalty_nodes[neighbour_p] > new_penalty:
                 penalty_nodes[neighbour_p] = new_penalty
@@ -298,19 +300,17 @@ def get_TSspace_path_greedy(grid_size:int, edges_2dir:list, graph_dist_2dir:dict
     # all visited
     return path_nodes[des]
     
-
-            
-
-def cal_pass_time(block_:list, road_dist:float, speed:float):
+def cal_pass_time(block_:list, road_dist:float, speed:float, b0:float):
     tmp_d = 0
-    b_count = 0
+    b_situation = []
     for i in range(len(block_)):
         if tmp_d >= road_dist:
             break
-        if block_[i]:
+        if block_[i] + 1 > b0:
             tmp_d += speed / 2
-            b_count += 1
+            b_situation.append(block_[i] + 1)
         else:
             tmp_d += speed
-    return i, b_count
+            b_situation.append(0)
+    return i, np.array(b_situation)
          

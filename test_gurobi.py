@@ -387,7 +387,7 @@ def init_problem_state(start:list, des:list, grid_size:int, v_spd:float, dist:fl
             point_xy[i*grid_size+j] = np.array([j,i]) 
 
     # get init state 
-    problem_state = ProblemState(space_routes = space_routes, destinations = des, start_location = start, 
+    problem_state = ProblemState(grid_size=grid_size, space_routes = space_routes, destinations = des, start_location = start, 
                                  point_xy = point_xy,vehicle_speed = v_spd, space_distance = graph_distance, 
                                  space_arc = edges)
     return problem_state
